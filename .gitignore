@@ -1,0 +1,78 @@
+# --- Secrets -----------------------------------------------------------------
+# Never commit real API keys. Keep .env.example (with placeholders) tracked.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+venv/
+.venv/
+env/
+
+# --- Python ------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.pyc
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+# Byte-compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# --- Virtual environments ----------------------------------------------------
+venv/
+env/
+ENV/
+.venv/
+virtualenv/
+
+# --- Testing / tooling caches ------------------------------------------------
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+
+# --- Editors / OS ------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Project artifacts -------------------------------------------------------
+# Recorded/downloaded call audio and Twilio recordings
+*.wav
+*.mp3
+*.ogg
+recordings/
+sample_call.wav
+
+# Logs and local scratch output
+*.log
+logs/
+tmp/
+scratch/
+
+# Packaged builds of the project
+meditrack.zip
+*.zip
+
+# ngrok
+ngrok.exe
+ngrok.yml
+
+# NOTE: data/ is deliberately NOT ignored - medicines.json and
+# pharmacy_info.json are the Week 2 knowledge base and must be tracked.

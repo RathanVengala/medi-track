@@ -1,0 +1,670 @@
+{
+  "version": "2.0",
+  "last_updated": "2026-08-02",
+  "source": "GreenLeaf Pharmacy internal formulary + stock snapshot",
+  "medicines": [
+    {
+      "id": "MED-001",
+      "brand_name": "Panadol",
+      "generic_name": "Paracetamol",
+      "aliases": [
+        "acetaminophen",
+        "tylenol",
+        "calpol",
+        "pcm"
+      ],
+      "category": "Painkiller / Fever reducer",
+      "form": "Tablet",
+      "strength": "500 mg",
+      "pack_size": "20 tablets",
+      "price": 297.5,
+      "stock_qty": 148,
+      "reorder_level": 30,
+      "prescription_required": false,
+      "common_uses": "Mild to moderate pain, headache, toothache, body ache and fever",
+      "storage": "Store below 25 C in a dry place, away from direct sunlight",
+      "manufacturer": "GSK",
+      "shelf_location": "Aisle 1, Shelf A",
+      "substitutes": [
+        "MED-002"
+      ]
+    },
+    {
+      "id": "MED-002",
+      "brand_name": "Brufen",
+      "generic_name": "Ibuprofen",
+      "aliases": [
+        "advil",
+        "motrin",
+        "nurofen"
+      ],
+      "category": "Painkiller / Anti-inflammatory",
+      "form": "Tablet",
+      "strength": "400 mg",
+      "pack_size": "20 tablets",
+      "price": 361.25,
+      "stock_qty": 92,
+      "reorder_level": 25,
+      "prescription_required": false,
+      "common_uses": "Pain, inflammation, period cramps, muscle sprains and fever",
+      "storage": "Store below 25 C. Take after food",
+      "manufacturer": "Abbott",
+      "shelf_location": "Aisle 1, Shelf A",
+      "substitutes": [
+        "MED-001"
+      ]
+    },
+    {
+      "id": "MED-003",
+      "brand_name": "Amoxil",
+      "generic_name": "Amoxicillin",
+      "aliases": [
+        "amoxycillin",
+        "amox",
+        "moxikind"
+      ],
+      "category": "Antibiotic",
+      "form": "Capsule",
+      "strength": "500 mg",
+      "pack_size": "21 capsules",
+      "price": 1062.5,
+      "stock_qty": 34,
+      "reorder_level": 12,
+      "prescription_required": true,
+      "common_uses": "Bacterial infections of the chest, throat, ear, skin and urinary tract",
+      "storage": "Store below 25 C in a dry place",
+      "manufacturer": "GSK",
+      "shelf_location": "Aisle 3, Shelf B",
+      "substitutes": [
+        "MED-020"
+      ]
+    },
+    {
+      "id": "MED-004",
+      "brand_name": "Zithromax",
+      "generic_name": "Azithromycin",
+      "aliases": [
+        "azithral",
+        "z-pack",
+        "azee"
+      ],
+      "category": "Antibiotic",
+      "form": "Tablet",
+      "strength": "250 mg",
+      "pack_size": "6 tablets",
+      "price": 833.0,
+      "stock_qty": 6,
+      "reorder_level": 8,
+      "prescription_required": true,
+      "common_uses": "Respiratory tract infections, sinusitis, and some skin infections",
+      "storage": "Store below 30 C in a dry place",
+      "manufacturer": "Pfizer",
+      "shelf_location": "Aisle 3, Shelf B",
+      "substitutes": [
+        "MED-003"
+      ]
+    },
+    {
+      "id": "MED-005",
+      "brand_name": "Zyrtec",
+      "generic_name": "Cetirizine",
+      "aliases": [
+        "cetzine",
+        "alerid",
+        "okacet"
+      ],
+      "category": "Antihistamine / Allergy",
+      "form": "Tablet",
+      "strength": "10 mg",
+      "pack_size": "10 tablets",
+      "price": 233.75,
+      "stock_qty": 76,
+      "reorder_level": 20,
+      "prescription_required": false,
+      "common_uses": "Allergic rhinitis, hay fever, itching, hives and runny nose",
+      "storage": "Store below 25 C",
+      "manufacturer": "UCB",
+      "shelf_location": "Aisle 2, Shelf C",
+      "substitutes": [
+        "MED-006"
+      ]
+    },
+    {
+      "id": "MED-006",
+      "brand_name": "Claritin",
+      "generic_name": "Loratadine",
+      "aliases": [
+        "lorfast",
+        "alaspan"
+      ],
+      "category": "Antihistamine / Allergy",
+      "form": "Tablet",
+      "strength": "10 mg",
+      "pack_size": "10 tablets",
+      "price": 263.5,
+      "stock_qty": 41,
+      "reorder_level": 15,
+      "prescription_required": false,
+      "common_uses": "Non-drowsy relief of allergy symptoms, sneezing and watery eyes",
+      "storage": "Store below 25 C",
+      "manufacturer": "Bayer",
+      "shelf_location": "Aisle 2, Shelf C",
+      "substitutes": [
+        "MED-005"
+      ]
+    },
+    {
+      "id": "MED-007",
+      "brand_name": "Prilosec",
+      "generic_name": "Omeprazole",
+      "aliases": [
+        "omez",
+        "losec"
+      ],
+      "category": "Antacid / Acid reducer",
+      "form": "Capsule",
+      "strength": "20 mg",
+      "pack_size": "14 capsules",
+      "price": 544.0,
+      "stock_qty": 58,
+      "reorder_level": 20,
+      "prescription_required": false,
+      "common_uses": "Acidity, heartburn, acid reflux and stomach ulcers",
+      "storage": "Store below 25 C. Take before food",
+      "manufacturer": "AstraZeneca",
+      "shelf_location": "Aisle 2, Shelf A",
+      "substitutes": [
+        "MED-008"
+      ]
+    },
+    {
+      "id": "MED-008",
+      "brand_name": "Protonix",
+      "generic_name": "Pantoprazole",
+      "aliases": [
+        "pantop",
+        "pan 40"
+      ],
+      "category": "Antacid / Acid reducer",
+      "form": "Tablet",
+      "strength": "40 mg",
+      "pack_size": "15 tablets",
+      "price": 612.0,
+      "stock_qty": 22,
+      "reorder_level": 15,
+      "prescription_required": true,
+      "common_uses": "Severe acid reflux, gastritis and ulcer treatment",
+      "storage": "Store below 25 C",
+      "manufacturer": "Sun Pharma",
+      "shelf_location": "Aisle 2, Shelf A",
+      "substitutes": [
+        "MED-007"
+      ]
+    },
+    {
+      "id": "MED-009",
+      "brand_name": "Glucophage",
+      "generic_name": "Metformin",
+      "aliases": [
+        "glycomet",
+        "metfor"
+      ],
+      "category": "Diabetes",
+      "form": "Tablet",
+      "strength": "500 mg",
+      "pack_size": "30 tablets",
+      "price": 476.0,
+      "stock_qty": 64,
+      "reorder_level": 20,
+      "prescription_required": true,
+      "common_uses": "Type 2 diabetes blood sugar control",
+      "storage": "Store below 30 C in a dry place",
+      "manufacturer": "Merck",
+      "shelf_location": "Aisle 4, Shelf A",
+      "substitutes": []
+    },
+    {
+      "id": "MED-010",
+      "brand_name": "Lipitor",
+      "generic_name": "Atorvastatin",
+      "aliases": [
+        "atorva",
+        "storvas"
+      ],
+      "category": "Cholesterol",
+      "form": "Tablet",
+      "strength": "20 mg",
+      "pack_size": "30 tablets",
+      "price": 969.0,
+      "stock_qty": 38,
+      "reorder_level": 15,
+      "prescription_required": true,
+      "common_uses": "Lowering high cholesterol and reducing cardiovascular risk",
+      "storage": "Store below 25 C",
+      "manufacturer": "Pfizer",
+      "shelf_location": "Aisle 4, Shelf B",
+      "substitutes": []
+    },
+    {
+      "id": "MED-011",
+      "brand_name": "Norvasc",
+      "generic_name": "Amlodipine",
+      "aliases": [
+        "amlong",
+        "amlopin"
+      ],
+      "category": "Blood pressure",
+      "form": "Tablet",
+      "strength": "5 mg",
+      "pack_size": "30 tablets",
+      "price": 416.5,
+      "stock_qty": 55,
+      "reorder_level": 20,
+      "prescription_required": true,
+      "common_uses": "High blood pressure and angina",
+      "storage": "Store below 25 C",
+      "manufacturer": "Pfizer",
+      "shelf_location": "Aisle 4, Shelf B",
+      "substitutes": [
+        "MED-012"
+      ]
+    },
+    {
+      "id": "MED-012",
+      "brand_name": "Zestril",
+      "generic_name": "Lisinopril",
+      "aliases": [
+        "lisinace",
+        "listril"
+      ],
+      "category": "Blood pressure",
+      "form": "Tablet",
+      "strength": "10 mg",
+      "pack_size": "30 tablets",
+      "price": 442.0,
+      "stock_qty": 29,
+      "reorder_level": 15,
+      "prescription_required": true,
+      "common_uses": "High blood pressure and heart failure",
+      "storage": "Store below 25 C",
+      "manufacturer": "AstraZeneca",
+      "shelf_location": "Aisle 4, Shelf B",
+      "substitutes": [
+        "MED-011"
+      ]
+    },
+    {
+      "id": "MED-013",
+      "brand_name": "Ventolin",
+      "generic_name": "Salbutamol",
+      "aliases": [
+        "albuterol",
+        "asthalin",
+        "inhaler"
+      ],
+      "category": "Respiratory / Asthma",
+      "form": "Inhaler",
+      "strength": "100 mcg per puff",
+      "pack_size": "200 puff inhaler",
+      "price": 743.75,
+      "stock_qty": 4,
+      "reorder_level": 10,
+      "prescription_required": true,
+      "common_uses": "Relief of asthma attacks, wheezing and shortness of breath",
+      "storage": "Store below 30 C. Do not puncture or burn the canister",
+      "manufacturer": "GSK",
+      "shelf_location": "Aisle 5, Shelf A",
+      "substitutes": []
+    },
+    {
+      "id": "MED-014",
+      "brand_name": "Lantus",
+      "generic_name": "Insulin Glargine",
+      "aliases": [
+        "basaglar",
+        "insulin pen",
+        "glargine"
+      ],
+      "category": "Diabetes",
+      "form": "Injection pen",
+      "strength": "100 IU/mL",
+      "pack_size": "3 mL pen",
+      "price": 2890.0,
+      "stock_qty": 0,
+      "reorder_level": 5,
+      "prescription_required": true,
+      "common_uses": "Long acting insulin for type 1 and type 2 diabetes",
+      "storage": "Refrigerate at 2 to 8 C. Do not freeze. Cold chain item",
+      "manufacturer": "Sanofi",
+      "shelf_location": "Pharmacy fridge",
+      "substitutes": []
+    },
+    {
+      "id": "MED-015",
+      "brand_name": "Ecosprin",
+      "generic_name": "Aspirin",
+      "aliases": [
+        "acetylsalicylic acid",
+        "disprin",
+        "aspro"
+      ],
+      "category": "Blood thinner / Painkiller",
+      "form": "Tablet",
+      "strength": "75 mg",
+      "pack_size": "14 tablets",
+      "price": 161.5,
+      "stock_qty": 88,
+      "reorder_level": 25,
+      "prescription_required": false,
+      "common_uses": "Low dose blood thinning after heart events, and pain relief at higher doses",
+      "storage": "Store below 25 C in a dry place",
+      "manufacturer": "USV",
+      "shelf_location": "Aisle 1, Shelf B",
+      "substitutes": []
+    },
+    {
+      "id": "MED-016",
+      "brand_name": "D-Rise",
+      "generic_name": "Cholecalciferol (Vitamin D3)",
+      "aliases": [
+        "vitamin d",
+        "vitamin d3",
+        "calcirol"
+      ],
+      "category": "Vitamin / Supplement",
+      "form": "Sachet",
+      "strength": "60000 IU",
+      "pack_size": "4 sachets",
+      "price": 425.0,
+      "stock_qty": 47,
+      "reorder_level": 15,
+      "prescription_required": false,
+      "common_uses": "Vitamin D deficiency, bone health support",
+      "storage": "Store below 25 C",
+      "manufacturer": "USV",
+      "shelf_location": "Aisle 6, Shelf A",
+      "substitutes": [
+        "MED-017"
+      ]
+    },
+    {
+      "id": "MED-017",
+      "brand_name": "Centrum",
+      "generic_name": "Multivitamin and Multimineral",
+      "aliases": [
+        "multivitamin",
+        "supradyn",
+        "daily vitamin"
+      ],
+      "category": "Vitamin / Supplement",
+      "form": "Tablet",
+      "strength": "Adult formula",
+      "pack_size": "30 tablets",
+      "price": 807.5,
+      "stock_qty": 33,
+      "reorder_level": 12,
+      "prescription_required": false,
+      "common_uses": "Daily vitamin and mineral supplementation, general fatigue support",
+      "storage": "Store below 25 C",
+      "manufacturer": "Pfizer",
+      "shelf_location": "Aisle 6, Shelf A",
+      "substitutes": [
+        "MED-016"
+      ]
+    },
+    {
+      "id": "MED-018",
+      "brand_name": "Electral",
+      "generic_name": "Oral Rehydration Salts",
+      "aliases": [
+        "ors",
+        "rehydration",
+        "electrolyte powder"
+      ],
+      "category": "Rehydration",
+      "form": "Powder sachet",
+      "strength": "21.8 g",
+      "pack_size": "5 sachets",
+      "price": 204.0,
+      "stock_qty": 120,
+      "reorder_level": 30,
+      "prescription_required": false,
+      "common_uses": "Dehydration from diarrhoea, vomiting, heat or exertion",
+      "storage": "Store in a cool dry place. Use within 24 hours of mixing",
+      "manufacturer": "FDC",
+      "shelf_location": "Aisle 2, Shelf B",
+      "substitutes": []
+    },
+    {
+      "id": "MED-019",
+      "brand_name": "Benadryl Cough Formula",
+      "generic_name": "Dextromethorphan",
+      "aliases": [
+        "cough syrup",
+        "dextromethorphan hydrobromide",
+        "cofsils"
+      ],
+      "category": "Cough and cold",
+      "form": "Syrup",
+      "strength": "100 mL bottle",
+      "pack_size": "1 bottle",
+      "price": 391.0,
+      "stock_qty": 27,
+      "reorder_level": 10,
+      "prescription_required": false,
+      "common_uses": "Dry irritating cough relief",
+      "storage": "Store below 25 C. Use within 30 days of opening",
+      "manufacturer": "Johnson and Johnson",
+      "shelf_location": "Aisle 2, Shelf D",
+      "substitutes": []
+    },
+    {
+      "id": "MED-020",
+      "brand_name": "Augmentin",
+      "generic_name": "Amoxicillin and Clavulanic Acid",
+      "aliases": [
+        "co-amoxiclav",
+        "clavam",
+        "amoxiclav"
+      ],
+      "category": "Antibiotic",
+      "form": "Tablet",
+      "strength": "625 mg",
+      "pack_size": "10 tablets",
+      "price": 1351.5,
+      "stock_qty": 0,
+      "reorder_level": 10,
+      "prescription_required": true,
+      "common_uses": "Resistant bacterial infections of the chest, sinus, skin and urinary tract",
+      "storage": "Store below 25 C in a dry place",
+      "manufacturer": "GSK",
+      "shelf_location": "Aisle 3, Shelf B",
+      "substitutes": [
+        "MED-003",
+        "MED-004"
+      ]
+    },
+    {
+      "id": "MED-021",
+      "brand_name": "Cipro",
+      "generic_name": "Ciprofloxacin",
+      "aliases": [
+        "ciplox",
+        "cifran"
+      ],
+      "category": "Antibiotic",
+      "form": "Tablet",
+      "strength": "500 mg",
+      "pack_size": "10 tablets",
+      "price": 705.5,
+      "stock_qty": 19,
+      "reorder_level": 10,
+      "prescription_required": true,
+      "common_uses": "Urinary tract infections and certain gastrointestinal infections",
+      "storage": "Store below 25 C. Avoid taking with dairy or antacids",
+      "manufacturer": "Bayer",
+      "shelf_location": "Aisle 3, Shelf C",
+      "substitutes": []
+    },
+    {
+      "id": "MED-022",
+      "brand_name": "Synthroid",
+      "generic_name": "Levothyroxine",
+      "aliases": [
+        "thyronorm",
+        "eltroxin",
+        "thyroid tablet"
+      ],
+      "category": "Thyroid",
+      "form": "Tablet",
+      "strength": "50 mcg",
+      "pack_size": "100 tablets",
+      "price": 578.0,
+      "stock_qty": 44,
+      "reorder_level": 15,
+      "prescription_required": true,
+      "common_uses": "Hypothyroidism, underactive thyroid replacement therapy",
+      "storage": "Store below 25 C. Take on an empty stomach in the morning",
+      "manufacturer": "Abbott",
+      "shelf_location": "Aisle 4, Shelf C",
+      "substitutes": []
+    },
+    {
+      "id": "MED-023",
+      "brand_name": "Singulair",
+      "generic_name": "Montelukast",
+      "aliases": [
+        "montair",
+        "montek"
+      ],
+      "category": "Respiratory / Asthma",
+      "form": "Tablet",
+      "strength": "10 mg",
+      "pack_size": "15 tablets",
+      "price": 867.0,
+      "stock_qty": 21,
+      "reorder_level": 10,
+      "prescription_required": true,
+      "common_uses": "Preventive control of asthma and allergic rhinitis",
+      "storage": "Store below 25 C. Usually taken at bedtime",
+      "manufacturer": "MSD",
+      "shelf_location": "Aisle 5, Shelf A",
+      "substitutes": []
+    },
+    {
+      "id": "MED-024",
+      "brand_name": "Voltaren Gel",
+      "generic_name": "Diclofenac Diethylamine",
+      "aliases": [
+        "volini",
+        "pain gel",
+        "diclofenac gel"
+      ],
+      "category": "Topical painkiller",
+      "form": "Gel",
+      "strength": "1.16 percent",
+      "pack_size": "30 g tube",
+      "price": 488.75,
+      "stock_qty": 36,
+      "reorder_level": 12,
+      "prescription_required": false,
+      "common_uses": "Local relief of muscle pain, joint pain, sprains and back pain",
+      "storage": "Store below 25 C. For external use only",
+      "manufacturer": "Novartis",
+      "shelf_location": "Aisle 1, Shelf C",
+      "substitutes": []
+    },
+    {
+      "id": "MED-025",
+      "brand_name": "Cortaid",
+      "generic_name": "Hydrocortisone",
+      "aliases": [
+        "hydrocortisone cream",
+        "steroid cream"
+      ],
+      "category": "Topical steroid",
+      "form": "Cream",
+      "strength": "1 percent",
+      "pack_size": "15 g tube",
+      "price": 352.75,
+      "stock_qty": 14,
+      "reorder_level": 8,
+      "prescription_required": false,
+      "common_uses": "Itching, eczema, insect bites and mild skin inflammation",
+      "storage": "Store below 25 C. For external use only",
+      "manufacturer": "Johnson and Johnson",
+      "shelf_location": "Aisle 7, Shelf A",
+      "substitutes": []
+    },
+    {
+      "id": "MED-026",
+      "brand_name": "Flagyl",
+      "generic_name": "Metronidazole",
+      "aliases": [
+        "metrogyl",
+        "metrondiazole"
+      ],
+      "category": "Antibiotic",
+      "form": "Tablet",
+      "strength": "400 mg",
+      "pack_size": "15 tablets",
+      "price": 335.75,
+      "stock_qty": 31,
+      "reorder_level": 12,
+      "prescription_required": true,
+      "common_uses": "Certain stomach, dental and gynaecological bacterial infections",
+      "storage": "Store below 25 C. Avoid alcohol during the course",
+      "manufacturer": "Sanofi",
+      "shelf_location": "Aisle 3, Shelf C",
+      "substitutes": []
+    },
+    {
+      "id": "MED-027",
+      "brand_name": "Omnacortil",
+      "generic_name": "Prednisolone",
+      "aliases": [
+        "wysolone",
+        "prednisone"
+      ],
+      "category": "Steroid / Anti-inflammatory",
+      "form": "Tablet",
+      "strength": "5 mg",
+      "pack_size": "10 tablets",
+      "price": 242.25,
+      "stock_qty": 26,
+      "reorder_level": 10,
+      "prescription_required": true,
+      "common_uses": "Inflammatory and allergic conditions, asthma flare ups",
+      "storage": "Store below 25 C. Take after food",
+      "manufacturer": "Macleods",
+      "shelf_location": "Aisle 5, Shelf B",
+      "substitutes": []
+    },
+    {
+      "id": "MED-028",
+      "brand_name": "Dolo Cold",
+      "generic_name": "Paracetamol, Phenylephrine and Chlorpheniramine",
+      "aliases": [
+        "cold tablet",
+        "sinarest",
+        "cold and flu tablet"
+      ],
+      "category": "Cough and cold",
+      "form": "Tablet",
+      "strength": "500 mg combination",
+      "pack_size": "10 tablets",
+      "price": 280.5,
+      "stock_qty": 9,
+      "reorder_level": 15,
+      "prescription_required": false,
+      "common_uses": "Blocked nose, runny nose, sneezing and fever from common cold",
+      "storage": "Store below 25 C",
+      "manufacturer": "Micro Labs",
+      "shelf_location": "Aisle 2, Shelf D",
+      "substitutes": [
+        "MED-001",
+        "MED-005"
+      ]
+    }
+  ]
+}

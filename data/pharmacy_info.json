@@ -1,0 +1,54 @@
+{
+  "name": "GreenLeaf Pharmacy",
+  "tagline": "Your neighbourhood pharmacy since 2009",
+  "phone": "+1 555 0134",
+  "address": "42 Maple Street, Springfield",
+  "email": "care@greenleafpharmacy.example",
+  "currency": "INR",
+  "currency_symbol": "Rs.",
+  "hours": {
+    "monday": "8:00 AM to 9:00 PM",
+    "tuesday": "8:00 AM to 9:00 PM",
+    "wednesday": "8:00 AM to 9:00 PM",
+    "thursday": "8:00 AM to 9:00 PM",
+    "friday": "8:00 AM to 9:00 PM",
+    "saturday": "9:00 AM to 7:00 PM",
+    "sunday": "10:00 AM to 4:00 PM"
+  },
+  "services": [
+    "Prescription dispensing",
+    "Home delivery within 5 miles",
+    "Blood pressure and blood sugar checks",
+    "Vaccination appointments",
+    "Medicine reminder and refill service"
+  ],
+  "delivery": {
+    "available": true,
+    "radius_miles": 5,
+    "free_above": 2125.0,
+    "fee": 212.5,
+    "same_day_cutoff": "5:00 PM",
+    "notes": "Same day delivery for orders placed before 5 PM. Cold chain items are delivered in an insulated box."
+  },
+  "policies": {
+    "prescription": "Prescription-only medicines need a valid prescription. You can send a photo of it ahead of pickup.",
+    "returns": "Unopened non-refrigerated items can be returned within 7 days with the receipt.",
+    "insurance": "We accept most major insurance plans. Bring your card at pickup.",
+    "clinical_advice": "Dosage, drug interaction and diagnosis questions are always transferred to the pharmacist on duty."
+  },
+  "pharmacist_on_duty": "Ms. Rivera",
+  "faqs": [
+    {
+      "question": "Do you deliver?",
+      "answer": "Yes, we deliver free within 5 miles for orders over 2125 rupees, and same day if you order before 5 PM."
+    },
+    {
+      "question": "Can I get a medicine without a prescription?",
+      "answer": "Over the counter items yes. Prescription-only medicines need a valid prescription before we can dispense them."
+    },
+    {
+      "question": "Can you hold an item for me?",
+      "answer": "Yes, we can reserve stock at the counter for up to 24 hours under your name and phone number."
+    }
+  ]
+}
