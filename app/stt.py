@@ -38,15 +38,19 @@ def is_probable_noise(text: str) -> bool:
     """
     True when a transcript is almost certainly hallucinated from silence.
 
-    Two signals: a transcript containing no Latin letters at all (we pin
-    Whisper to English, so another script means it invented the audio), and
+    Two signals: a transcript containing no ASCII letters or digits at all (we
+    pin Whisper to English, so another script means it invented the audio), and
     the known filler phrases above.
+
+    Digits count. A dictated phone number - "9 8 7 6 5 4 3 2 1 0" - is a real
+    utterance with no letters in it, and counting letters alone silently threw
+    away every phone number a caller gave us.
     """
     stripped = (text or "").strip()
     if not stripped:
         return True
-    latin_letters = sum(1 for ch in stripped if ch.isascii() and ch.isalpha())
-    if latin_letters < 2:
+    ascii_alnum = sum(1 for ch in stripped if ch.isascii() and ch.isalnum())
+    if ascii_alnum < 2:
         return True
     collapsed = re.sub(r"[^a-z ]+", "", stripped.lower()).strip()
     collapsed = re.sub(r"\s+", " ", collapsed)

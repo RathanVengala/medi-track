@@ -1,11 +1,4 @@
-"""
-Tests for the Week 2 knowledge base and query handler.
 
-No API keys and no network needed. Run either way:
-
-    python -m pytest tests/test_knowledge_base.py -q
-    python -m tests.test_knowledge_base
-"""
 
 from __future__ import annotations
 
@@ -245,6 +238,15 @@ def test_real_speech_survives_the_noise_filter():
         "Thank you",
         "OK",
     ):
+        assert not is_probable_noise(text), f"wrongly filtered: {text!r}"
+
+
+def test_dictated_numbers_are_not_noise():
+    """
+    A phone number has no letters in it. Counting only letters silently threw
+    away every number a caller dictated.
+    """
+    for text in ("9876543210", "1 2 3 4 5 6 7 8", "123456789", "98765 43210", "500"):
         assert not is_probable_noise(text), f"wrongly filtered: {text!r}"
 
 

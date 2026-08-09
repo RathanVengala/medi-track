@@ -76,3 +76,7 @@ ngrok.yml
 
 # NOTE: data/ is deliberately NOT ignored - medicines.json and
 # pharmacy_info.json are the Week 2 knowledge base and must be tracked.
+# These two, however, are runtime state written during calls, not source data.
+data/orders.json
+data/escalations.json
+data/*.json.tmp

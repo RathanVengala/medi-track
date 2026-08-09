@@ -7,7 +7,9 @@ _sessions: dict[str, ConversationSession] = {}
 
 def get_session(call_id: str) -> ConversationSession:
     if call_id not in _sessions:
-        _sessions[call_id] = ConversationSession()
+        # The call id is carried into every order and escalation raised during
+        # this call, so a pharmacist can trace a record back to the recording.
+        _sessions[call_id] = ConversationSession(call_id=call_id)
     return _sessions[call_id]
 
 

@@ -1,11 +1,4 @@
-"""
-Pharmacy knowledge base (Week 2).
 
-Loads the medicine formulary and store profile from `data/`, and exposes
-fuzzy search + availability lookups that tolerate the kind of mangled
-medicine names speech-to-text produces on a phone call
-("amoxy sillin", "ventalin", "paracetemol").
-"""
 
 from __future__ import annotations
 

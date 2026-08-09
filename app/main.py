@@ -3,20 +3,22 @@ from __future__ import annotations
 import logging
 
 import httpx
-from fastapi import FastAPI, Form, Request, Response
+from fastapi import FastAPI, Form, HTTPException, Request, Response
 from twilio.twiml.voice_response import VoiceResponse
 
 from app.config import settings
 from app.conversation import end_session, get_session
+from app.escalation import EscalationStatus, get_escalation_queue
 from app.knowledge_base import get_knowledge_base
 from app.llm import generate_response
+from app.orders import OrderError, OrderStatus, get_order_store
 from app.query_handler import build_context, handle_query
 from app.stt import is_probable_noise, transcribe_audio
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("meditrack.main")
 
-app = FastAPI(title="MediTrack AI - Voice Agent (Week 2: Pharmacy Knowledge Base)")
+app = FastAPI(title="MediTrack AI - Voice Agent (Week 3: Order Creation & Pharmacy Workflow)")
 
 GOODBYE_PHRASES = ("bye", "goodbye", "that's all", "thats all", "hang up", "no thank you")
 
@@ -27,8 +29,10 @@ def health() -> dict:
     kb = get_knowledge_base()
     return {
         "status": "ok",
-        "service": "meditrack-ai-week2",
+        "service": "meditrack-ai-week3",
         "medicines_loaded": len(kb.medicines),
+        "orders": len(get_order_store().list_orders()),
+        "open_escalations": get_escalation_queue().open_count,
     }
 
 
@@ -74,6 +78,76 @@ def kb_availability(name: str) -> dict:
         "medicine": result.medicine.to_dict() if result.medicine else None,
         "alternatives": [a.to_dict() for a in result.alternatives],
     }
+
+
+@app.get("/inventory/check")
+def inventory_check(name: str, quantity: int = 1) -> dict:
+    """Can we supply N packs of this right now? (on hand minus reserved)"""
+    kb = get_knowledge_base()
+    medicine = kb.find(name)
+    if medicine is None:
+        return {"query": name, "found": False, "message": f"'{name}' is not in the formulary."}
+    return {"query": name, "found": True, **get_order_store().check_stock(medicine, quantity).to_dict()}
+
+
+# --- Orders (Week 3) --------------------------------------------------------
+
+
+@app.get("/orders")
+def list_orders(status: str | None = None, phone: str | None = None) -> dict:
+    orders = get_order_store().list_orders(status=status, phone=phone)
+    return {"count": len(orders), "orders": [o.to_dict() for o in orders]}
+
+
+@app.get("/orders/{order_id}")
+def get_order(order_id: str) -> dict:
+    order = get_order_store().get(order_id)
+    if order is None:
+        raise HTTPException(status_code=404, detail=f"Order not found: {order_id}")
+    return order.to_dict()
+
+
+@app.post("/orders/{order_id}/status")
+def set_order_status(order_id: str, status: str = Form(...), note: str = Form("")) -> dict:
+    """Pharmacist-side transition, e.g. awaiting_prescription -> ready_for_pickup."""
+    try:
+        new_status = OrderStatus(status)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status. Valid values: {[s.value for s in OrderStatus]}",
+        )
+    try:
+        return get_order_store().update_status(order_id, new_status, note).to_dict()
+    except OrderError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+# --- Pharmacist escalation queue (Week 3) -----------------------------------
+
+
+@app.get("/escalations")
+def list_escalations(status: str | None = None, reason: str | None = None) -> dict:
+    queue = get_escalation_queue()
+    items = queue.list_escalations(status=status, reason=reason)
+    return {"count": len(items), "open": queue.open_count, "escalations": [e.to_dict() for e in items]}
+
+
+@app.post("/escalations/{escalation_id}/status")
+def set_escalation_status(
+    escalation_id: str, status: str = Form(...), resolution: str = Form("")
+) -> dict:
+    try:
+        new_status = EscalationStatus(status)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status. Valid values: {[s.value for s in EscalationStatus]}",
+        )
+    try:
+        return get_escalation_queue().update_status(escalation_id, new_status, resolution).to_dict()
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
 
 
 @app.post("/query/analyze")

@@ -1,10 +1,4 @@
-"""
-Local demo/test harness for the MediTrack AI pipeline — no Twilio needed.
 
-Week 2 adds knowledge-base modes so you can show the full flow:
-
-    Customer Query -> Knowledge Base Search -> AI Response
-"""
 
 from __future__ import annotations
 
@@ -12,8 +6,10 @@ import argparse
 import sys
 
 from app.conversation import get_session
+from app.escalation import get_escalation_queue
 from app.knowledge_base import get_knowledge_base
 from app.llm import generate_response
+from app.orders import get_order_store
 from app.query_handler import build_context, handle_query
 from app.stt import TranscriptionError, is_probable_noise, transcribe_audio
 
@@ -75,6 +71,78 @@ def run_demo(verbose: bool) -> None:
     for query in DEMO_QUERIES:
         show_pipeline(session, query, verbose=verbose)
     print()
+
+
+ORDER_DEMO_TURNS = [
+    "Hi, do you have Panadol in stock?",
+    "Great, I would like to order two packs please",
+    "My name is Rathan Vengala",
+    "My number is 9876543210",
+    "I'll collect it from the counter",
+    "Yes, please place the order",
+]
+
+
+def run_order_demo() -> None:
+    """Request -> Availability Check -> Order Creation -> Confirmation."""
+    kb = get_knowledge_base()
+    store = get_order_store()
+    queue = get_escalation_queue()
+
+    _rule("MediTrack AI - Week 3 demo: placing an order over the phone")
+    session = get_session("local-order-demo")
+
+    panadol = kb.find("panadol")
+    print(f"Stock before call : {store.check_stock(panadol, 1).message}")
+    print(f"Orders on file    : {len(store.list_orders())}")
+    print(f"Open escalations  : {queue.open_count}")
+
+    for turn in ORDER_DEMO_TURNS:
+        print(f"\nCustomer   : {turn}")
+        reply = generate_response(session, turn)
+        draft = session.draft
+        if draft:
+            slot = draft.next_slot().value
+            collected = [
+                f"{k}={v}"
+                for k, v in (
+                    ("items", ", ".join(f"{i.quantity}x{i.brand_name}" for i in draft.items)),
+                    ("name", draft.name),
+                    ("phone", draft.phone),
+                    ("fulfilment", draft.fulfilment),
+                )
+                if v
+            ]
+            print(f"  [order]  : {' | '.join(collected)}")
+            print(f"  [awaiting]: {slot}")
+        print(f"MediTrack AI: {reply}")
+
+    _rule("Result")
+    print(f"Stock after call  : {store.check_stock(panadol, 1).message}")
+    for order in store.list_orders()[:3]:
+        print(f"Order record      : {order.summary_line()}")
+    print(f"Open escalations  : {queue.open_count}")
+
+
+def run_escalation_demo() -> None:
+    """Show each way a call gets handed to the pharmacist."""
+    queue = get_escalation_queue()
+    _rule("MediTrack AI - Week 3: pharmacist escalation paths")
+    cases = [
+        ("Clinical question", "How many paracetamol can I take in a day?"),
+        ("Prescription-only order", "I want to order one pack of Amoxil"),
+        ("Not enough stock", "Please reserve ten Ventolin inhalers"),
+        ("Customer asks for a human", "Can I speak to the pharmacist please?"),
+    ]
+    for label, turn in cases:
+        session = get_session(f"local-esc-{label}")
+        print(f"\n[{label}]")
+        print(f"Customer   : {turn}")
+        print(f"MediTrack AI: {generate_response(session, turn)}")
+
+    _rule("Pharmacist queue")
+    for item in queue.list_escalations(status="open"):
+        print(" ", item.summary_line())
 
 
 def run_kb_search(query: str) -> None:
@@ -161,6 +229,16 @@ def main() -> None:
         action="store_true",
         help="Run the scripted Week 2 demo: query -> knowledge base search -> AI response.",
     )
+    group.add_argument(
+        "--order-demo",
+        action="store_true",
+        help="Run the Week 3 demo: request -> availability -> order creation -> confirmation.",
+    )
+    group.add_argument(
+        "--escalation-demo",
+        action="store_true",
+        help="Run the Week 3 pharmacist escalation demo.",
+    )
     parser.add_argument(
         "--quiet",
         action="store_true",
@@ -177,6 +255,10 @@ def main() -> None:
             run_kb_search(args.kb)
         elif args.demo:
             run_demo(verbose=not args.quiet)
+        elif args.order_demo:
+            run_order_demo()
+        elif args.escalation_demo:
+            run_escalation_demo()
         elif args.text:
             session = get_session("local-text-test")
             show_pipeline(session, args.text, verbose=not args.quiet)

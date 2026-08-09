@@ -1,14 +1,4 @@
-"""
-LLM response generation, grounded on the pharmacy knowledge base (Week 2).
 
-Every turn now runs:
-
-    customer text -> query handler -> knowledge base search
-                  -> grounding context -> LLM -> spoken reply
-
-If no LLM provider is configured (or the call fails), the reply is composed
-directly from the knowledge base instead, so the pipeline still answers.
-"""
 
 from __future__ import annotations
 
@@ -16,8 +6,19 @@ import logging
 from dataclasses import dataclass, field
 
 from app.config import settings
+from app.escalation import EscalationReason, get_escalation_queue
 from app.knowledge_base import get_knowledge_base
-from app.query_handler import QueryResult, build_context, fallback_answer, handle_query
+from app.order_flow import (
+    DraftItem,
+    FlowResult,
+    OrderDraft,
+    build_order_context,
+    escalation_context,
+    fallback_order_reply,
+    should_start_order,
+    update_draft,
+)
+from app.query_handler import Intent, QueryResult, build_context, fallback_answer, handle_query
 
 logger = logging.getLogger("meditrack.llm")
 
@@ -45,8 +46,11 @@ Safety rules:
 - Prescription-only medicines always need a valid prescription; say so when relevant.
 - Reply with the spoken sentences only. Do not include internal or system XML tags.
 
-You cannot yet place orders in the system. If the customer wants to order or reserve
-something, confirm the details back to them and tell them a pharmacist will follow up.
+You CAN place orders. When an ORDER WORKFLOW STATE block is present, follow it exactly:
+- Ask for only the one detail it marks as NEXT, in a single short question.
+- Never invent a name, phone number, address or quantity the caller has not said.
+- When it reports ORDER CREATED, give the caller the order number and the total.
+- When it reports a pharmacist escalation, say a pharmacist will follow up.
 
 STORE PROFILE (background facts you may use):
 {store_profile}
@@ -70,8 +74,15 @@ SYSTEM_PROMPT = build_system_prompt()
 class ConversationSession:
     """Holds the message history for a single caller (in-memory, per call)."""
 
+    call_id: str = ""
     history: list[dict] = field(default_factory=list)
     last_query: QueryResult | None = None
+    # Week 3 - the order being collected across turns of this call.
+    draft: OrderDraft | None = None
+    last_flow: FlowResult | None = None
+    # Most recent medicine(s) discussed, so "order two packs" resolves without
+    # the caller repeating the name.
+    last_medicines: list = field(default_factory=list)
 
     def add_user_turn(self, text: str) -> None:
         self.history.append({"role": "user", "content": text})
@@ -83,12 +94,21 @@ class ConversationSession:
 def generate_response(session: ConversationSession, user_text: str) -> str:
     """
     Given the running conversation and the customer's latest transcribed
-    utterance, search the knowledge base and produce the next spoken reply.
+    utterance, search the knowledge base, advance any order in progress, and
+    produce the next spoken reply.
     """
     query = handle_query(user_text)
+    previous_query = session.last_query
     session.last_query = query
     context = build_context(query)
-    logger.debug("Knowledge base context:\n%s", context)
+
+    order_context = _advance_order(session, query, previous_query)
+    if order_context:
+        # Mid-order turns ("my name is...", "9876543210") match no medicine, and
+        # the knowledge base block would just say so. The order state is the
+        # whole story on those turns.
+        context = order_context if not query.medicines else f"{context}\n\n{order_context}"
+    logger.debug("Context:\n%s", context)
 
     session.add_user_turn(user_text)
     messages = _messages_with_context(session, context)
@@ -103,14 +123,68 @@ def generate_response(session: ConversationSession, user_text: str) -> str:
                 "No API key configured for provider '%s'; answering from the knowledge base only.",
                 settings.LLM_PROVIDER,
             )
-            reply = fallback_answer(query)
+            reply = _fallback_reply(session, query)
     except Exception as exc:  # noqa: BLE001 - a live call must never drop
         logger.error("LLM call failed (%s); falling back to knowledge base reply.", exc)
-        reply = fallback_answer(query)
+        reply = _fallback_reply(session, query)
 
     session.add_assistant_turn(reply)
     logger.info("LLM reply: %s", reply)
     return reply
+
+
+def _advance_order(
+    session: ConversationSession,
+    query: QueryResult,
+    previous_query: QueryResult | None,
+) -> str:
+    """
+    Run the order state machine for this turn and return its context block.
+
+    Also handles the escalations that happen outside an order - clinical
+    questions and explicit requests for a human.
+    """
+    if query.intent in (Intent.CLINICAL, Intent.PHARMACIST):
+        reason = (
+            EscalationReason.CLINICAL_QUESTION
+            if query.intent == Intent.CLINICAL
+            else EscalationReason.CUSTOMER_REQUEST
+        )
+        escalation = get_escalation_queue().raise_escalation(
+            reason=reason,
+            summary=query.text[:200],
+            call_id=session.call_id,
+            customer_name=session.draft.name if session.draft else None,
+            customer_phone=session.draft.phone if session.draft else None,
+            transcript=query.text,
+        )
+        return escalation_context(reason, escalation.id)
+
+    # Remember what is being discussed, so "I'd like to order two packs" and a
+    # bare "yes, please" both resolve to the medicine named a turn earlier.
+    if query.medicines:
+        session.last_medicines = list(query.medicines)
+
+    carried = session.last_medicines if not query.medicines else []
+
+    if not should_start_order(query, session.draft, carried):
+        return ""
+
+    if session.draft is None:
+        session.draft = OrderDraft(call_id=session.call_id)
+
+    flow = update_draft(session.draft, query, carried_medicines=carried)
+    session.last_flow = flow
+    return build_order_context(flow)
+
+
+def _fallback_reply(session: ConversationSession, query: QueryResult) -> str:
+    """Knowledge-base-only answer, order-aware."""
+    if session.last_flow is not None:
+        reply = fallback_order_reply(session.last_flow)
+        if reply:
+            return reply
+    return fallback_answer(query)
 
 
 def _messages_with_context(session: ConversationSession, context: str) -> list[dict]:
