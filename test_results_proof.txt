@@ -1,0 +1,14 @@
+INFO:httpx:HTTP Request: GET http://testserver/orders "HTTP/1.1 503 Service Unavailable"
+==============================================================================
+MediTrack AI - full test report
+==============================================================================
+Suite                                             Tests  Passed      Time
+------------------------------------------------------------------------------
+Week 2 - knowledge base & query handling             25      25     0.52s
+Week 3 - orders, inventory & escalation              34      34     1.33s
+Week 4 - negative, security & recovery               42      42    11.61s
+Week 4 - MVP validation benchmark                   131     131     0.88s
+------------------------------------------------------------------------------
+TOTAL                                               232     232    100.0%
+
+All suites passed.

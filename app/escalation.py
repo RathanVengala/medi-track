@@ -11,16 +11,15 @@ the queue after the call has ended.
 
 from __future__ import annotations
 
-import json
 import logging
-import os
 import threading
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
 
 from app.knowledge_base import DATA_DIR
+from app.storage import atomic_write_json, file_lock, load_json
 
 logger = logging.getLogger("meditrack.escalation")
 
@@ -111,28 +110,49 @@ class EscalationQueue:
         self.load()
 
     def load(self) -> None:
-        if not self.path.exists():
-            self._items = {}
-            self._sequence = 0
-            return
-        with self.path.open("r", encoding="utf-8") as f:
-            raw = json.load(f)
-        self._items = {row["id"]: Escalation.from_dict(row) for row in raw.get("escalations", [])}
-        self._sequence = int(raw.get("sequence", len(self._items)))
+        """Re-read the queue from disk, recovering from a damaged file."""
+        with self._lock:
+            with file_lock(self.path):
+                self._load_unlocked()
+
+    def _load_unlocked(self) -> None:
+        raw = load_json(self.path, default={})
+        items: dict[str, Escalation] = {}
+        skipped = 0
+        for row in raw.get("escalations", []):
+            try:
+                item = Escalation.from_dict(row)
+            except (KeyError, TypeError, ValueError) as exc:
+                skipped += 1
+                logger.error("Skipping unreadable escalation record (%s): %r", exc, row)
+                continue
+            # Keep object identity across reloads, so a caller holding an
+            # Escalation reference sees the current record, not a stale copy.
+            existing = self._items.get(item.id)
+            if existing is not None:
+                for f in fields(Escalation):
+                    setattr(existing, f.name, getattr(item, f.name))
+                item = existing
+            items[item.id] = item
+        if skipped:
+            logger.error("%d escalation record(s) in %s could not be read.", skipped, self.path.name)
+
+        self._items = items
+        try:
+            self._sequence = int(raw.get("sequence", len(items)))
+        except (TypeError, ValueError):
+            self._sequence = len(items)
         logger.info("Loaded %d escalations from %s", len(self._items), self.path)
 
-    def _save(self) -> None:
-        payload = {
-            "sequence": self._sequence,
-            "updated_at": _now(),
-            "escalations": [e.to_dict() for e in self._items.values()],
-        }
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(".json.tmp")
-        with tmp.open("w", encoding="utf-8") as f:
-            json.dump(payload, f, indent=2, ensure_ascii=False)
-            f.write("\n")
-        os.replace(tmp, self.path)
+    def _save_unlocked(self) -> None:
+        atomic_write_json(
+            self.path,
+            {
+                "sequence": self._sequence,
+                "updated_at": _now(),
+                "escalations": [e.to_dict() for e in self._items.values()],
+            },
+        )
 
     def _next_id(self) -> str:
         self._sequence += 1
@@ -149,20 +169,24 @@ class EscalationQueue:
         transcript: str | None = None,
     ) -> Escalation:
         with self._lock:
-            item = Escalation(
-                id=self._next_id(),
-                created_at=_now(),
-                call_id=call_id,
-                reason=reason.value,
-                priority=_PRIORITY.get(reason, Priority.NORMAL).value,
-                summary=summary,
-                customer_name=customer_name,
-                customer_phone=customer_phone,
-                order_id=order_id,
-                transcript=transcript,
-            )
-            self._items[item.id] = item
-            self._save()
+            with file_lock(self.path):
+                # Re-read first, so a sibling worker's escalations survive this
+                # save and the next id does not collide with one of theirs.
+                self._load_unlocked()
+                item = Escalation(
+                    id=self._next_id(),
+                    created_at=_now(),
+                    call_id=call_id,
+                    reason=reason.value,
+                    priority=_PRIORITY.get(reason, Priority.NORMAL).value,
+                    summary=summary,
+                    customer_name=customer_name,
+                    customer_phone=customer_phone,
+                    order_id=order_id,
+                    transcript=transcript,
+                )
+                self._items[item.id] = item
+                self._save_unlocked()
         logger.info("Escalation %s raised (%s, %s)", item.id, item.reason, item.priority)
         return item
 
@@ -187,13 +211,15 @@ class EscalationQueue:
         self, escalation_id: str, status: EscalationStatus, resolution: str = ""
     ) -> Escalation:
         with self._lock:
-            item = self.get(escalation_id)
-            if item is None:
-                raise KeyError(f"Escalation not found: {escalation_id}")
-            item.status = status.value
-            if resolution:
-                item.resolution = resolution
-            self._save()
+            with file_lock(self.path):
+                self._load_unlocked()
+                item = self.get(escalation_id)
+                if item is None:
+                    raise KeyError(f"Escalation not found: {escalation_id}")
+                item.status = status.value
+                if resolution:
+                    item.resolution = resolution
+                self._save_unlocked()
         return item
 
     @property

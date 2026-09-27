@@ -92,6 +92,37 @@ def _ratio(a: str, b: str) -> float:
     return SequenceMatcher(None, a, b).ratio()
 
 
+# Ordinary English words that appear inside product names ("daily vitamin",
+# "cold tablet", "pain gel") but identify nothing on their own. A caller saying
+# one of these has not named a medicine, so the containment shortcut in
+# _score_name() is skipped for them and they must clear the fuzzy threshold on
+# their own merits - which "daily" against "daily vitamin" does not.
+_GENERIC_NAME_WORDS = frozenset(
+    {
+        "acid", "and", "capsule", "capsules", "cold", "cough", "cream", "daily",
+        "drops", "extra", "flu", "for", "formula", "gel", "oral", "pain", "pen",
+        "plus", "powder", "regular", "salts", "spray", "strong", "syrup",
+        "tablet", "tablets", "the", "with",
+    }
+)
+
+
+def _is_generic_phrase(text: str) -> bool:
+    """True when every word is an ordinary word that names no medicine."""
+    words = text.split()
+    return bool(words) and all(word in _GENERIC_NAME_WORDS for word in words)
+
+
+def _contains_phrase(haystack: str, needle: str) -> bool:
+    """
+    True when `needle` appears in `haystack` on whole-word boundaries.
+
+    A bare substring test matched any fragment, so a four-letter run anywhere
+    inside a name scored as a confident hit.
+    """
+    return re.search(rf"(?<!\w){re.escape(needle)}(?!\w)", haystack) is not None
+
+
 # --------------------------------------------------------------------------
 # Data model
 # --------------------------------------------------------------------------
@@ -219,9 +250,14 @@ class PharmacyKnowledgeBase:
         self,
         medicines_file: Path | str = MEDICINES_FILE,
         pharmacy_file: Path | str = PHARMACY_FILE,
+        strict: bool = False,
     ) -> None:
         self.medicines_file = Path(medicines_file)
         self.pharmacy_file = Path(pharmacy_file)
+        self.strict = strict
+        # Populated by load() when the formulary could not be read; the app
+        # starts anyway and surfaces this through /health.
+        self.load_error: str | None = None
         self.medicines: list[Medicine] = []
         self.pharmacy: dict = {}
         self._by_id: dict[str, Medicine] = {}
@@ -230,13 +266,52 @@ class PharmacyKnowledgeBase:
         self._phonetic_index: dict[str, list[tuple[Medicine, str]]] = {}
         self.load()
 
+    @property
+    def is_healthy(self) -> bool:
+        """False when the formulary is missing, damaged, or empty."""
+        return self.load_error is None and bool(self.medicines)
+
     # -- loading ----------------------------------------------------------
 
     def load(self) -> None:
-        self.medicines = [
-            Medicine.from_dict(row) for row in self._read_json(self.medicines_file)["medicines"]
-        ]
-        self.pharmacy = self._read_json(self.pharmacy_file)
+        """
+        Build the index from disk.
+
+        Never raises. A missing or unreadable formulary used to abort the
+        process at import time, which meant a single bad data file took the
+        whole phone line down with a traceback instead of a message. Now the
+        failure is recorded in `load_error`, the app still starts, /health
+        reports it, and the endpoints that need the formulary answer 503 with
+        the reason. `strict=True` (used by the tests) re-raises instead.
+        """
+        self.load_error = None
+        try:
+            raw_medicines = self._read_json(self.medicines_file)
+            rows = raw_medicines.get("medicines")
+            if not isinstance(rows, list):
+                raise KnowledgeBaseError(
+                    f"{self.medicines_file} has no 'medicines' list."
+                )
+            medicines = [Medicine.from_dict(row) for row in rows]
+            pharmacy = self._read_json(self.pharmacy_file)
+        except (KnowledgeBaseError, KeyError, TypeError, ValueError) as exc:
+            self.load_error = (
+                f"{exc} The pharmacy formulary could not be loaded, so medicine "
+                f"lookups are unavailable. Restore {self.medicines_file.name} and "
+                f"{self.pharmacy_file.name} under {DATA_DIR} and restart."
+            )
+            logger.error("Knowledge base failed to load: %s", self.load_error)
+            if self.strict:
+                raise
+            self.medicines = []
+            self.pharmacy = {}
+            self._by_id = {}
+            self._name_index.clear()
+            self._phonetic_index.clear()
+            return
+
+        self.medicines = medicines
+        self.pharmacy = pharmacy
 
         self._by_id = {m.id: m for m in self.medicines}
         self._name_index.clear()
@@ -258,12 +333,19 @@ class PharmacyKnowledgeBase:
     @staticmethod
     def _read_json(path: Path) -> dict:
         if not path.exists():
-            raise KnowledgeBaseError(f"Knowledge base file not found: {path}")
+            raise KnowledgeBaseError(f"Knowledge base file not found: {path}.")
         try:
             with path.open("r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
         except json.JSONDecodeError as exc:
-            raise KnowledgeBaseError(f"Invalid JSON in {path}: {exc}") from exc
+            raise KnowledgeBaseError(f"Invalid JSON in {path}: {exc}.") from exc
+        except OSError as exc:
+            raise KnowledgeBaseError(f"Could not read {path}: {exc}.") from exc
+        if not isinstance(data, dict):
+            raise KnowledgeBaseError(
+                f"{path} should contain a JSON object, got {type(data).__name__}."
+            )
+        return data
 
     # -- lookups ----------------------------------------------------------
 
@@ -283,9 +365,17 @@ class PharmacyKnowledgeBase:
         if query_norm == name_norm:
             return 1.0, "exact"
         # Caller said "amoxicillin five hundred" -> the name is inside the query.
-        if len(name_norm) >= 4 and name_norm in query_norm:
+        if len(name_norm) >= 4 and _contains_phrase(query_norm, name_norm):
             return 0.9, "exact"
-        if len(query_norm) >= 4 and query_norm in name_norm:
+        # The caller said part of a longer name ("cetirizine" for "cetirizine
+        # hydrochloride"). Only on a word boundary, and never for a phrase made
+        # entirely of ordinary words - "daily" is inside the alias "daily
+        # vitamin", and used to come back as a confident match for Centrum.
+        if (
+            len(query_norm) >= 4
+            and _contains_phrase(name_norm, query_norm)
+            and not _is_generic_phrase(query_norm)
+        ):
             return 0.86, "exact"
 
         literal = _ratio(query_norm, name_norm)

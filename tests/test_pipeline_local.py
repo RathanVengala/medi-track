@@ -6,10 +6,10 @@ import argparse
 import sys
 
 from app.conversation import get_session
-from app.escalation import get_escalation_queue
+from app.escalation import EscalationStatus, get_escalation_queue
 from app.knowledge_base import get_knowledge_base
 from app.llm import generate_response
-from app.orders import get_order_store
+from app.orders import OrderStatus, get_order_store
 from app.query_handler import build_context, handle_query
 from app.stt import TranscriptionError, is_probable_noise, transcribe_audio
 
@@ -145,6 +145,151 @@ def run_escalation_demo() -> None:
         print(" ", item.summary_line())
 
 
+def run_full_demo() -> None:
+    """
+    Week 4: the complete MVP journey, end to end.
+
+    Call 1 (customer)   enquiry -> order for a prescription-only medicine
+    Pharmacist          works the escalation queue and releases the order
+    Call 2 (customer)   rings back and asks whether the order is ready
+    """
+    kb = get_knowledge_base()
+    store = get_order_store()
+    queue = get_escalation_queue()
+
+    _rule("ACT 1 - Customer calls to order")
+    session = get_session("full-demo-call-1")
+    amoxil = kb.find("amoxil")
+    print(f"Stock before  : {store.check_stock(amoxil, 1).message}\n")
+
+    for turn in [
+        "Hello, do you have Amoxil in stock?",
+        "I would like to order one pack",
+        "My name is Rathan Vengala",
+        "My number is 9876543210",
+        "I'll collect it from the counter",
+        "Yes, please place the order",
+    ]:
+        print(f"Customer    : {turn}")
+        print(f"MediTrack AI: {generate_response(session, turn)}\n")
+
+    order = store.list_orders()[0]
+    print(f"Order record  : {order.summary_line()}")
+    print(f"Stock after   : {store.check_stock(amoxil, 1).message}")
+
+    _rule("ACT 2 - Pharmacist works the queue")
+    open_items = queue.list_escalations(status="open")
+    for item in open_items:
+        print(f"  {item.summary_line()}")
+
+    for item in open_items:
+        queue.update_status(item.id, EscalationStatus.RESOLVED, "Prescription received and checked")
+        print(f"\n  Pharmacist resolves {item.id}")
+
+    store.update_status(order.id, OrderStatus.READY_FOR_PICKUP, "Prescription verified, packed")
+    print(f"  Order {order.id} -> ready_for_pickup")
+    print(f"  Open escalations remaining: {queue.open_count}")
+
+    _rule("ACT 3 - Customer calls back")
+    session2 = get_session("full-demo-call-2")
+    for turn in [
+        f"Hi, is my order {order.id.split('-')[-1]} ready?",
+        "Thank you, goodbye",
+    ]:
+        print(f"Customer    : {turn}")
+        print(f"MediTrack AI: {generate_response(session2, turn)}\n")
+
+    _rule("Final state")
+    for record in store.list_orders():
+        print(f"  {record.summary_line()}")
+    print(f"  Escalations: {len(queue.list_escalations())} total, {queue.open_count} open")
+
+
+def run_chat() -> None:
+    """
+    Type a conversation instead of speaking it.
+
+    Keeps one session for the whole run, so multi-turn ordering works - unlike
+    repeated --text calls, which each start a fresh process and forget
+    everything. Useful for testing the flow without a microphone.
+    """
+    kb = get_knowledge_base()
+    store = get_order_store()
+    queue = get_escalation_queue()
+
+    _rule(f"MediTrack AI - typed conversation ({len(kb.medicines)} medicines)")
+    print("Type what you would say. Commands: /state, /orders, /queue, /reset, /quit")
+    print("Say 'goodbye' or type /quit to end.\n")
+
+    session = get_session("local-chat")
+    while True:
+        try:
+            text = input("You         : ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+        if not text:
+            continue
+
+        if text.startswith("/"):
+            command = text.lower()
+            if command in ("/quit", "/q", "/exit"):
+                break
+            if command == "/state":
+                draft = session.draft
+                if draft is None:
+                    print("  (no order in progress)\n")
+                else:
+                    print(f"  items      : {', '.join(f'{i.quantity}x{i.brand_name}' for i in draft.items) or '-'}")
+                    print(f"  name       : {draft.name}")
+                    print(f"  phone      : {draft.phone}")
+                    print(f"  fulfilment : {draft.fulfilment}")
+                    print(f"  address    : {draft.address}")
+                    print(f"  next slot  : {draft.next_slot().value}")
+                    print(f"  order id   : {draft.order_id}\n")
+                continue
+            if command == "/orders":
+                orders = store.list_orders()
+                print("  (no orders yet)\n" if not orders else "")
+                for order in orders:
+                    print(f"  {order.summary_line()}")
+                print()
+                continue
+            if command == "/queue":
+                items = queue.list_escalations()
+                print("  (queue empty)\n" if not items else "")
+                for item in items:
+                    print(f"  {item.summary_line()}")
+                print()
+                continue
+            if command == "/reset":
+                session.draft = None
+                session.history.clear()
+                session.last_medicines.clear()
+                print("  (conversation reset)\n")
+                continue
+            print(f"  unknown command: {text}\n")
+            continue
+
+        if any(phrase in text.lower() for phrase in GOODBYE_PHRASES):
+            print("MediTrack AI: Thanks for calling! Have a great day.\n")
+            break
+
+        reply = generate_response(session, text)
+        result = session.last_query
+        detail = f"intent={result.intent.value}" if result else ""
+        if session.draft and session.draft.is_active:
+            detail += f" | awaiting={session.draft.next_slot().value}"
+        print(f"  [{detail}]")
+        print(f"MediTrack AI: {reply}\n")
+
+    orders = store.list_orders()
+    if orders:
+        _rule("Orders on file")
+        for order in orders:
+            print(f"  {order.summary_line()}")
+
+
 def run_kb_search(query: str) -> None:
     kb = get_knowledge_base()
     _rule(f"Knowledge base search: {query!r}")
@@ -239,6 +384,16 @@ def main() -> None:
         action="store_true",
         help="Run the Week 3 pharmacist escalation demo.",
     )
+    group.add_argument(
+        "--full-demo",
+        action="store_true",
+        help="Run the Week 4 complete MVP journey: order, pharmacist review, status callback.",
+    )
+    group.add_argument(
+        "--chat",
+        action="store_true",
+        help="Type a multi-turn conversation instead of speaking it (keeps one session).",
+    )
     parser.add_argument(
         "--quiet",
         action="store_true",
@@ -259,6 +414,10 @@ def main() -> None:
             run_order_demo()
         elif args.escalation_demo:
             run_escalation_demo()
+        elif args.full_demo:
+            run_full_demo()
+        elif args.chat:
+            run_chat()
         elif args.text:
             session = get_session("local-text-test")
             show_pipeline(session, args.text, verbose=not args.quiet)

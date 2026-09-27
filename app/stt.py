@@ -87,10 +87,16 @@ def _whisper_prompt() -> str:
 
 def transcribe_audio(audio_bytes: bytes, filename: str = "audio.wav") -> str:
     """
-    Convert raw audio bytes into text.
+    Convert raw audio bytes into text. Returns "" when nothing was understood.
 
-    Tries Whisper (OpenAI) first if an API key is configured, otherwise
-    (or on failure) falls back to the local SpeechRecognition library.
+    This function never raises. Silence on the line is the single most common
+    thing that happens during a call, and it is exactly what used to kill the
+    session: the fallback recogniser reached out to Google, and the resulting
+    OSError / TimeoutError / socket error propagated all the way out of the
+    webhook. The caller sat in silence, and the conversation was over.
+
+    An empty string means "I did not catch that" - `is_probable_noise("")` is
+    True, so the voice handler re-prompts and the call continues.
     """
     if settings.OPENAI_API_KEY:
         try:
@@ -98,7 +104,15 @@ def transcribe_audio(audio_bytes: bytes, filename: str = "audio.wav") -> str:
         except Exception as exc:  # noqa: BLE001 - we want a graceful fallback
             logger.warning("Whisper transcription failed (%s); falling back.", exc)
 
-    return _transcribe_with_speech_recognition(audio_bytes)
+    try:
+        return _transcribe_with_speech_recognition(audio_bytes)
+    except TranscriptionError as exc:
+        logger.info("No transcript from the fallback recogniser: %s", exc)
+    except Exception as exc:  # noqa: BLE001 - a live call must never drop
+        # Network errors, a malformed WAV, a missing optional dependency: all
+        # of these mean "no transcript", not "end the call".
+        logger.warning("Fallback transcription failed (%s: %s).", type(exc).__name__, exc)
+    return ""
 
 
 def _transcribe_with_whisper(audio_bytes: bytes, filename: str) -> str:
@@ -132,8 +146,17 @@ def _transcribe_with_speech_recognition(audio_bytes: bytes) -> str:
     import speech_recognition as sr
 
     recognizer = sr.Recognizer()
-    with sr.AudioFile(io.BytesIO(audio_bytes)) as source:
-        audio_data = recognizer.record(source)
+    # Bound the outbound request. Without this the recogniser inherits the
+    # global socket timeout - which is None - so a silent or unreachable
+    # endpoint blocks the worker thread indefinitely.
+    recognizer.operation_timeout = settings.STT_TIMEOUT_SECONDS
+
+    try:
+        with sr.AudioFile(io.BytesIO(audio_bytes)) as source:
+            audio_data = recognizer.record(source)
+    except (ValueError, OSError, EOFError) as exc:
+        # Twilio occasionally hands back a truncated or zero-length recording.
+        raise TranscriptionError(f"Unreadable audio: {exc}") from exc
 
     try:
         text = recognizer.recognize_google(audio_data)
@@ -141,6 +164,10 @@ def _transcribe_with_speech_recognition(audio_bytes: bytes) -> str:
         raise TranscriptionError("Could not understand audio.") from exc
     except sr.RequestError as exc:
         raise TranscriptionError(f"Speech recognition service error: {exc}") from exc
+    except (OSError, TimeoutError) as exc:
+        # Includes socket.timeout and urllib's URLError, which SpeechRecognition
+        # does not always wrap in RequestError.
+        raise TranscriptionError(f"Speech recognition unreachable: {exc}") from exc
 
     logger.info("SpeechRecognition transcript: %s", text)
-    return text.strip()
+    return (text or "").strip()

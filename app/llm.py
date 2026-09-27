@@ -13,8 +13,10 @@ from app.order_flow import (
     FlowResult,
     OrderDraft,
     build_order_context,
+    build_status_context,
     escalation_context,
     fallback_order_reply,
+    fallback_status_reply,
     should_start_order,
     update_draft,
 )
@@ -65,9 +67,19 @@ def build_system_prompt() -> str:
     )
 
 
-# Kept as a module-level constant for backwards compatibility with Week 1 code
-# and tests that imported SYSTEM_PROMPT directly.
-SYSTEM_PROMPT = build_system_prompt()
+def __getattr__(name: str) -> str:
+    """
+    Resolve `SYSTEM_PROMPT` on first use rather than at import.
+
+    Week 1 code and tests import the name directly, so it has to keep working.
+    Building it eagerly meant importing this module read data/medicines.json -
+    and a missing formulary took the whole process down with a traceback at
+    import time, before any error handling existed to report it. PEP 562 module
+    __getattr__ keeps the name available while making the read lazy.
+    """
+    if name == "SYSTEM_PROMPT":
+        return build_system_prompt()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 @dataclass
@@ -160,6 +172,12 @@ def _advance_order(
         )
         return escalation_context(reason, escalation.id)
 
+    # An order being collected right now outranks a status lookup, so a stray
+    # "the order" mid-conversation cannot derail the confirmation step.
+    draft_active = session.draft is not None and session.draft.is_active
+    if query.intent == Intent.ORDER_STATUS and not draft_active:
+        return build_status_context(query)
+
     # Remember what is being discussed, so "I'd like to order two packs" and a
     # bare "yes, please" both resolve to the medicine named a turn earlier.
     if query.medicines:
@@ -180,6 +198,8 @@ def _advance_order(
 
 def _fallback_reply(session: ConversationSession, query: QueryResult) -> str:
     """Knowledge-base-only answer, order-aware."""
+    if query.intent == Intent.ORDER_STATUS:
+        return fallback_status_reply(query)
     if session.last_flow is not None:
         reply = fallback_order_reply(session.last_flow)
         if reply:
@@ -202,7 +222,9 @@ def _messages_with_context(session: ConversationSession, context: str) -> list[d
 def _generate_with_openai(messages: list[dict]) -> str:
     from openai import OpenAI
 
-    client = OpenAI(api_key=settings.OPENAI_API_KEY)
+    # A phone caller is waiting in silence for this. Bound it, and let the
+    # knowledge-base fallback in generate_response() answer if it overruns.
+    client = OpenAI(api_key=settings.OPENAI_API_KEY, timeout=settings.LLM_TIMEOUT_SECONDS)
 
     completion = client.chat.completions.create(
         model=settings.OPENAI_LLM_MODEL,
@@ -216,7 +238,9 @@ def _generate_with_openai(messages: list[dict]) -> str:
 def _generate_with_anthropic(messages: list[dict]) -> str:
     import anthropic
 
-    client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+    client = anthropic.Anthropic(
+        api_key=settings.ANTHROPIC_API_KEY, timeout=settings.LLM_TIMEOUT_SECONDS
+    )
 
     # max_tokens caps thinking + reply text together, and Claude Opus 5 thinks by
     # default, so leave headroom. The reply itself stays short because the system

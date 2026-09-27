@@ -20,6 +20,7 @@ from app.order_flow import (
     OrderDraft,
     Slot,
     build_order_context,
+    build_status_context,
     fallback_order_reply,
     should_start_order,
     update_draft,
@@ -37,6 +38,7 @@ from app.query_handler import (
     detect_intent,
     extract_confirmation,
     extract_fulfilment,
+    extract_order_reference,
     extract_person_name,
     extract_phone,
     extract_quantity,
@@ -411,6 +413,75 @@ def test_fallback_replies_are_speakable():
         build_order_context(flow)
         reply = fallback_order_reply(flow)
         assert reply and "\n" not in reply and len(reply) < 320
+
+
+# --- order status lookup (Week 4) -------------------------------------------
+
+
+def test_extract_order_reference():
+    assert extract_order_reference("is my order ORD-1001 ready") == "ORD-1001"
+    assert extract_order_reference("checking on order 1001") == "ORD-1001"
+    # The agent reads the number out as digits, so it hears them back that way.
+    assert extract_order_reference("is my order one zero zero one ready") == "ORD-1001"
+    # A strength is not an order number.
+    assert extract_order_reference("do you have 1000 mg tablets") is None
+
+
+def test_status_lookup_by_order_number():
+    store, queue = fresh()
+    _, flow = converse(
+        ["I want to order one pack of Panadol", "Arun", "9123456789", "pickup", "yes"],
+        store,
+        queue,
+    )
+    order = flow.order
+    store.update_status(order.id, OrderStatus.READY_FOR_PICKUP)
+
+    query = handle_query(f"is my order {order.id.split('-')[-1]} ready")
+    assert query.intent == Intent.ORDER_STATUS
+    context = build_status_context(query, store=store)
+    assert order.id in context
+    assert "ready to collect" in context
+
+
+def test_status_lookup_by_phone_number():
+    store, queue = fresh()
+    _, flow = converse(
+        ["I want to order one pack of Panadol", "Arun", "9123456789", "pickup", "yes"],
+        store,
+        queue,
+    )
+    query = handle_query("is my order ready, my number is 9123456789")
+    context = build_status_context(query, store=store)
+    assert flow.order.id in context
+
+
+def test_status_lookup_does_not_invent_an_order():
+    store, _ = fresh()
+    context = build_status_context(handle_query("is my order 4242 ready"), store=store)
+    assert "No matching order found" in context
+    assert "Do not invent" in context
+
+
+def test_placing_an_order_is_not_a_status_query():
+    """
+    'Yes, please place the order' contains 'the order' - reading that as a
+    status question silently swallowed the confirmation and no order was made.
+    """
+    assert detect_intent("Yes, please place the order") != Intent.ORDER_STATUS
+    store, queue = fresh()
+    _, flow = converse(
+        [
+            "I want to order one pack of Panadol",
+            "Arun",
+            "9123456789",
+            "pickup",
+            "Yes, please place the order",
+        ],
+        store,
+        queue,
+    )
+    assert flow.order is not None, "confirmation phrase did not create the order"
 
 
 def main() -> None:

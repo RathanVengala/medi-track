@@ -80,3 +80,8 @@ ngrok.yml
 data/orders.json
 data/escalations.json
 data/*.json.tmp
+# app/storage.py's write path: a per-file cross-process lock, a pre-write
+# backup used for recovery, and a damaged file kept aside for inspection.
+data/*.json.lock
+data/*.json.bak
+data/*.json.corrupt-*

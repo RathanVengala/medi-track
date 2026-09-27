@@ -7,6 +7,7 @@ import re
 from dataclasses import dataclass, field
 from enum import Enum
 
+from app.config import settings
 from app.knowledge_base import (
     AvailabilityResult,
     Medicine,
@@ -55,6 +56,24 @@ _INTENT_PATTERNS: tuple[tuple[Intent, tuple[str, ...]], ...] = (
             r"\bcan i take\b.*\b(with|and)\b",
             r"\bwhat.s wrong with me\b",
             r"\bdiagnos",
+            # Combining two medicines is an interaction question however it is
+            # phrased. "Can I mix amoxicillin with paracetamol" used to fall
+            # through every group to UNKNOWN, which walked straight past the
+            # clinical gate - the one route that must never be missed.
+            r"\b(mix|mixing|combine|combining)\b.*\b(with|and)\b",
+            r"\b(mix|mixing|combine|combining)\b.*\b(these|them|both|two|together|medicines?|medications?|tablets?|pills?)\b",
+            r"\btake\b.*\b(together|at the same time|alongside|along with)\b",
+            r"\b(together with|alongside)\b.*\b(medicine|medication|tablets?|pills?)\b",
+            r"\bsafe\b.*\b(together|with)\b",
+            r"\b(interfere|interferes|react|reacts)\b.*\bwith\b",
+            r"\ballergic to\b",
+            r"\bcontraindicat",
+            r"\boverdose\b",
+            r"\btoo (many|much)\b.*\b(tablets?|pills?|take|taken)\b",
+            r"\b(how long|how many days)\b.*\b(take|use|continue|course)\b",
+            r"\b(empty stomach|before food|after food|with food)\b",
+            r"\bis it (safe|okay|ok)\b",
+            r"\bcan i (give|use) (it|this|them)\b.*\b(child|baby|kid|toddler|infant)\b",
         ),
     ),
     # An explicit request for a human outranks everything except a clinical
@@ -66,6 +85,16 @@ _INTENT_PATTERNS: tuple[tuple[Intent, tuple[str, ...]], ...] = (
             r"\b(put me through|transfer me)\b",
             r"\bis there (a|any) (real )?(person|human)\b",
             r"\bi want to speak to\b",
+            # "I need human help" was classified AVAILABILITY, because the
+            # generic "i need" purchase pattern matched it first. A request for
+            # a person is an escalation whatever verb introduces it.
+            r"\bhuman (help|being|agent|operator|assistance|support)\b",
+            r"\b(real|actual|live) (person|human|agent)\b",
+            r"\b(need|want|get me|give me)\b.*\b(human|pharmacist|chemist)\b",
+            r"\b(customer (service|support)|operator|receptionist|supervisor|manager)\b",
+            r"\bnot a (bot|robot|machine|computer)\b",
+            r"\b(bot|robot|machine|computer|ai)\b.*\b(human|person|real)\b",
+            r"\bsomeone (real|human)\b",
         ),
     ),
     (
@@ -103,8 +132,12 @@ _INTENT_PATTERNS: tuple[tuple[Intent, tuple[str, ...]], ...] = (
     (
         Intent.ORDER_STATUS,
         (
-            r"\b(my|the) order\b",
+            # Deliberately narrow: a bare "the order" also appears in "place the
+            # order", which is a confirmation, not a status question.
+            r"\b(is|are|was|has) (my|the) order\b",
+            r"\b(check|track|chase) (on )?(my|the) order\b",
             r"\border (status|number|ready)\b",
+            r"\bstatus of (my|the) order\b",
             r"\bis it ready\b",
             r"\bready for (pickup|pick up|collection)\b",
         ),
@@ -125,6 +158,17 @@ _INTENT_PATTERNS: tuple[tuple[Intent, tuple[str, ...]], ...] = (
             r"\bi will take\b",
             r"\bcan you (order|reserve|hold)\b",
             r"\bbook (it|me|one)\b",
+        ),
+    ),
+    # Checked before AVAILABILITY: "do I need a prescription for this" would
+    # otherwise be swallowed by the "i need" purchase pattern below.
+    (
+        Intent.PRESCRIPTION,
+        (
+            r"\bprescription\b",
+            r"\bwithout a script\b",
+            r"\bover the counter\b",
+            r"\bdoctor.s note\b",
         ),
     ),
     (
@@ -151,15 +195,6 @@ _INTENT_PATTERNS: tuple[tuple[Intent, tuple[str, ...]], ...] = (
         (r"\bdeliver", r"\bshipping\b", r"\bhome delivery\b", r"\bdrop it off\b"),
     ),
     (
-        Intent.PRESCRIPTION,
-        (
-            r"\bprescription\b",
-            r"\bwithout a script\b",
-            r"\bover the counter\b",
-            r"\bdoctor.s note\b",
-        ),
-    ),
-    (
         Intent.STORE_INFO,
         (
             r"\b(what time|when) (do|are) you\b",
@@ -168,6 +203,17 @@ _INTENT_PATTERNS: tuple[tuple[Intent, tuple[str, ...]], ...] = (
             r"\byour (address|location|timing|hours|phone)\b",
             r"\bwhere are you\b",
             r"\bhow late\b",
+            # Shop policy, not a medicine. "What is your return policy" used to
+            # reach the loose "what is" rule below and come back as
+            # MEDICINE_INFO, so the caller got a formulary answer to a shop
+            # question. These run before that rule and after DELIVERY and
+            # PRESCRIPTION, which own their own policies.
+            r"\b(return|refund|exchange|privacy|payment|cancellation)s? polic",
+            r"\bpolicy\b",
+            r"\bcan i (return|exchange|refund)\b",
+            r"\b(do you|can i) (accept|take|pay)\b.*\b(insurance|cards?|cash|upi|credit|debit)\b",
+            r"\bhow do i (pay|contact|reach) you\b",
+            r"\b(parking|wheelchair|pharmacist on duty)\b",
         ),
     ),
     (
@@ -279,15 +325,22 @@ class QueryResult:
     availability: list[AvailabilityResult] = field(default_factory=list)
     suggestions: list[SearchHit] = field(default_factory=list)
     quantity: int | None = None
+    # Set when a number was heard but refused - negative, zero, or over the
+    # per-call pack limit. The order flow re-asks instead of guessing.
+    quantity_issue: QuantityIssue | None = None
     strength: str | None = None
     form: str | None = None
     needs_pharmacist: bool = False
+    # True when the utterance was longer than MAX_QUERY_CHARS and was cut down
+    # before analysis.
+    truncated: bool = False
     # Week 3 - details needed to turn an enquiry into an order.
     person_name: str | None = None
     phone: str | None = None
     fulfilment: str | None = None
     address: str | None = None
     confirmation: bool | None = None
+    order_reference: str | None = None
 
     @property
     def matched(self) -> bool:
@@ -335,22 +388,68 @@ def _quantity_words_to_digits(text: str) -> str:
     return " ".join(str(_WORD_NUMBERS.get(token, token)) for token in text.split())
 
 
-def extract_quantity(text: str) -> int | None:
+class QuantityIssue(str, Enum):
+    """Why a spoken number was refused as a pack count."""
+
+    NEGATIVE = "negative"
+    ZERO = "zero"
+    TOO_MANY = "too_many"
+
+
+# A minus sign that belongs to the number rather than to a hyphenated name.
+# Excluded: "co-amoxiclav" (letter before the dash) and "98765-43210" (digit
+# before it), neither of which is a negative quantity.
+_NEGATIVE_NUMBER = re.compile(r"(?:(?<![\w.])-\s*|\b(?:minus|negative)\s+)(\d{1,6})", re.I)
+
+
+def _negative_numbers(text: str) -> set[int]:
     """
-    Number of packs the caller asked for.
+    Numbers the caller said with a minus in front.
+
+    normalize() strips punctuation, so by the time the quantity patterns run
+    the sign is already gone - which is exactly why "give me -5 tablets" came
+    back as a cheerful 5. This works on a lighter normalisation that keeps the
+    minus sign, and still converts spoken numbers, so "minus two packs" is
+    caught as well as "-2".
+    """
+    lowered = re.sub(r"[^a-z0-9\-\s]+", " ", (text or "").lower())
+    signed = _quantity_words_to_digits(lowered)
+    return {int(m.group(1)) for m in _NEGATIVE_NUMBER.finditer(signed)}
+
+
+def parse_quantity(text: str) -> tuple[int | None, QuantityIssue | None]:
+    """
+    Number of packs the caller asked for, plus why it was refused if it was.
 
     Spoken numbers are converted to digits first, so "two boxes" and "2 boxes"
-    are handled by the same pattern.
+    are handled by the same pattern. A number that is negative, zero, or above
+    the per-call pack limit returns `(None, issue)` - the flow then re-asks
+    rather than carrying a nonsense count towards an order.
     """
     lowered = _quantity_words_to_digits(normalize(text))
-    match = re.search(rf"\b(\d{{1,3}})\s*(?:x\s*)?{_QUANTITY_UNITS}\b", lowered)
-    if match:
-        return int(match.group(1))
-    # Bare "I need 2" / "reserve 3" style requests.
-    match = re.search(
-        r"\b(?:need|want|order|reserve|book|take|buy|give me|like)\s+(\d{1,3})\b", lowered
-    )
-    return int(match.group(1)) if match else None
+    match = re.search(rf"\b(\d{{1,6}})\s*(?:x\s*)?{_QUANTITY_UNITS}\b", lowered)
+    if not match:
+        # Bare "I need 2" / "reserve 3" style requests.
+        match = re.search(
+            r"\b(?:need|want|order|reserve|book|take|buy|give me|like)\s+(\d{1,6})\b", lowered
+        )
+    if not match:
+        return None, None
+
+    value = int(match.group(1))
+    if value in _negative_numbers(text):
+        return None, QuantityIssue.NEGATIVE
+    if value == 0:
+        return None, QuantityIssue.ZERO
+    if value > settings.MAX_ORDER_QUANTITY:
+        return None, QuantityIssue.TOO_MANY
+    return value, None
+
+
+def extract_quantity(text: str) -> int | None:
+    """Valid pack count, or None when the caller gave none or gave a bad one."""
+    quantity, _ = parse_quantity(text)
+    return quantity
 
 
 def extract_strength(text: str) -> str | None:
@@ -519,6 +618,31 @@ def extract_confirmation(text: str) -> bool | None:
     return None
 
 
+def extract_order_reference(text: str) -> str | None:
+    """
+    Find an order number a caller reads back.
+
+    Handles "ORD-1001", "order 1001" and the spoken form "one zero zero one",
+    which is how the agent reads it out in the first place.
+    """
+    lowered = _words_to_digits(normalize(text))
+    # "one zero zero one" becomes "1 0 0 1"; join adjacent digits back up so a
+    # dictated order number looks the same as a typed one.
+    collapsed = re.sub(r"(?<=\d)\s+(?=\d)", "", lowered)
+
+    match = re.search(r"\bord\s*(\d{4})\b", collapsed)
+    if match:
+        return f"ORD-{match.group(1)}"
+    match = re.search(r"\border(?:\s+(?:number|no|id))?\s+(\d{4})\b", collapsed)
+    if match:
+        return f"ORD-{match.group(1)}"
+    # A bare four-digit number, but not something that is clearly a strength.
+    match = re.search(r"(?<!\d)(\d{4})(?!\d)", collapsed)
+    if match and not re.search(rf"{match.group(1)}\s*(?:mg|mcg|ml|iu)", collapsed):
+        return f"ORD-{match.group(1)}"
+    return None
+
+
 def extract_address(text: str) -> str | None:
     """Take an address either from an explicit lead-in or as the whole reply."""
     match = re.search(r"\b(?:address is|deliver to|send it to|i live at|it.s at)\s+(.{5,120})", text, re.I)
@@ -544,6 +668,25 @@ def _ngrams(tokens: list[str], max_n: int = _MAX_NGRAM) -> list[tuple[int, int, 
     return grams
 
 
+def clamp_text(text: str, limit: int | None = None) -> tuple[str, bool]:
+    """
+    Cut an utterance down to the length a phone turn can plausibly be.
+
+    Returns `(text, was_truncated)`. The search below is O(tokens x formulary
+    x name length): 40,000 characters of input took over four minutes on the
+    development machine while holding the worker thread, which is a
+    denial-of-service path on a public webhook. A real spoken turn is a
+    sentence or two, so anything past the limit is discarded rather than
+    processed.
+    """
+    limit = settings.MAX_QUERY_CHARS if limit is None else limit
+    text = text or ""
+    if len(text) <= limit:
+        return text, False
+    logger.warning("Utterance of %d chars truncated to %d.", len(text), limit)
+    return text[:limit], True
+
+
 def extract_medicines(
     text: str,
     kb: PharmacyKnowledgeBase | None = None,
@@ -556,17 +699,37 @@ def extract_medicines(
     entity, and drops overlapping matches so a name is only reported once.
     """
     kb = kb or get_knowledge_base()
+    text, _ = clamp_text(text)
     tokens = normalize(text).split()
     if not tokens:
         return []
+    # Second bound, on tokens rather than characters: a caller who says 60
+    # words has said everything a pack of medicine needs, and this keeps the
+    # cost of one turn flat no matter what arrives.
+    if len(tokens) > settings.MAX_QUERY_TOKENS:
+        logger.warning(
+            "Utterance of %d tokens capped at %d for medicine extraction.",
+            len(tokens),
+            settings.MAX_QUERY_TOKENS,
+        )
+        tokens = tokens[: settings.MAX_QUERY_TOKENS]
 
+    # Repeating a word repeats its n-gram; score each distinct phrase once and
+    # reuse the result for every position it appears at.
+    scored: dict[str, ExtractedMedicine | None] = {}
     candidates: list[tuple[int, int, ExtractedMedicine]] = []
     for start, end, gram in _ngrams(tokens):
-        hits = kb.search(gram, limit=1, threshold=threshold, include_uses=False)
-        if hits:
-            hit = hits[0]
+        if gram not in scored:
+            hits = kb.search(gram, limit=1, threshold=threshold, include_uses=False)
+            scored[gram] = (
+                ExtractedMedicine(gram, hits[0].medicine, hits[0].score, hits[0].match_type)
+                if hits
+                else None
+            )
+        found = scored[gram]
+        if found is not None:
             candidates.append(
-                (start, end, ExtractedMedicine(gram, hit.medicine, hit.score, hit.match_type))
+                (start, end, ExtractedMedicine(gram, found.medicine, found.score, found.match_type))
             )
 
     # Prefer higher scores, then longer spans, then earlier position.
@@ -593,17 +756,27 @@ def extract_medicines(
 
 
 def handle_query(text: str, kb: PharmacyKnowledgeBase | None = None) -> QueryResult:
-    """Run the full customer query -> knowledge base search pipeline."""
+    """
+    Run the full customer query -> knowledge base search pipeline.
+
+    Oversized input is truncated rather than rejected, because this is the
+    live phone path and a caller must always get an answer. The HTTP endpoint
+    in app/main.py refuses it outright instead.
+    """
     kb = kb or get_knowledge_base()
+    text, truncated = clamp_text(text)
 
     intent = detect_intent(text)
     medicines = extract_medicines(text, kb=kb)
+    quantity, quantity_issue = parse_quantity(text)
 
     result = QueryResult(
         text=text,
         intent=intent,
         medicines=medicines,
-        quantity=extract_quantity(text),
+        truncated=truncated,
+        quantity=quantity,
+        quantity_issue=quantity_issue,
         strength=extract_strength(text),
         form=extract_form(text),
         needs_pharmacist=intent in (Intent.CLINICAL, Intent.PHARMACIST),
@@ -611,6 +784,9 @@ def handle_query(text: str, kb: PharmacyKnowledgeBase | None = None) -> QueryRes
         phone=extract_phone(text),
         fulfilment=extract_fulfilment(text),
         confirmation=extract_confirmation(text),
+        order_reference=(
+            extract_order_reference(text) if intent == Intent.ORDER_STATUS else None
+        ),
     )
 
     # Availability is resolved whenever a medicine was named at all - the
@@ -634,6 +810,33 @@ def handle_query(text: str, kb: PharmacyKnowledgeBase | None = None) -> QueryRes
 # Grounding context for the LLM
 # --------------------------------------------------------------------------
 
+# What the agent should say when a spoken pack count could not be accepted.
+QUANTITY_ISSUE_NOTE = {
+    QuantityIssue.NEGATIVE: (
+        "The caller appeared to say a negative quantity. Do not guess a number. "
+        "Ask how many packs they would like."
+    ),
+    QuantityIssue.ZERO: (
+        "The caller appeared to ask for zero packs. Do not create an order. "
+        "Ask how many packs they would like."
+    ),
+    QuantityIssue.TOO_MANY: (
+        f"The caller asked for more than the {settings.MAX_ORDER_QUANTITY}-pack limit for a "
+        "phone order. Say a pharmacist has to handle an order that large, and ask whether a "
+        "smaller quantity would help in the meantime."
+    ),
+}
+
+# The same messages as plain spoken sentences, for the no-LLM fallback path.
+QUANTITY_ISSUE_REPLY = {
+    QuantityIssue.NEGATIVE: "Sorry, I didn't catch that number. How many packs would you like?",
+    QuantityIssue.ZERO: "Sorry, I didn't catch that number. How many packs would you like?",
+    QuantityIssue.TOO_MANY: (
+        f"That's more than the {settings.MAX_ORDER_QUANTITY} packs I can take over the phone. "
+        "A pharmacist will need to arrange an order that size. Would a smaller quantity help for now?"
+    ),
+}
+
 
 def build_context(result: QueryResult, kb: PharmacyKnowledgeBase | None = None) -> str:
     """
@@ -648,6 +851,8 @@ def build_context(result: QueryResult, kb: PharmacyKnowledgeBase | None = None) 
     ]
     if result.quantity:
         lines.append(f"Requested quantity: {result.quantity}")
+    if result.quantity_issue:
+        lines.append(f"NOTE: {QUANTITY_ISSUE_NOTE[result.quantity_issue]}")
     if result.strength:
         lines.append(f"Requested strength: {result.strength}")
     if result.form:

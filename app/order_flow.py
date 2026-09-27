@@ -26,15 +26,20 @@ from app.knowledge_base import PharmacyKnowledgeBase, get_knowledge_base
 from app.orders import (
     Customer,
     Fulfilment,
+    InvalidQuantity,
     Order,
     OrderError,
     OrderItem,
     OrderStore,
     StockCheck,
     get_order_store,
+    validate_quantity,
 )
 from app.query_handler import (
+    QUANTITY_ISSUE_NOTE,
+    QUANTITY_ISSUE_REPLY,
     Intent,
+    QuantityIssue,
     QueryResult,
     extract_address,
     name_from_bare_reply,
@@ -76,6 +81,10 @@ class DraftItem:
     quantity: int = 1
     stock_ok: bool = True
     stock_message: str = ""
+    # True when the caller did say a pack count but it had to be refused
+    # (negative, zero, or over the limit). The default of one pack is then NOT
+    # their answer, and the flow must ask again before going any further.
+    needs_quantity: bool = False
 
 
 @dataclass
@@ -112,6 +121,8 @@ class OrderDraft:
         """First missing detail, in the order a person would ask for them."""
         if not self.items:
             return Slot.MEDICINE
+        if any(item.needs_quantity for item in self.items):
+            return Slot.QUANTITY
         if self.name is None:
             return Slot.NAME
         if self.phone is None:
@@ -161,6 +172,9 @@ class FlowResult:
     escalations: list[str] = field(default_factory=list)
     error: str | None = None
     cancelled: bool = False
+    # Set when this turn contained a pack count that had to be refused, so the
+    # agent re-asks for the quantity instead of assuming one pack.
+    quantity_issue: QuantityIssue | None = None
 
 
 # Intents that mean "I want to buy this", as opposed to just asking about it.
@@ -214,7 +228,7 @@ def update_draft(
     store = store or get_order_store()
     queue = queue or get_escalation_queue()
 
-    flow = FlowResult(draft=draft)
+    flow = FlowResult(draft=draft, quantity_issue=result.quantity_issue)
     asked = draft.asked_for
 
     # Only fall back to an earlier turn's medicine while the basket is empty,
@@ -233,20 +247,32 @@ def update_draft(
     # --- medicines and quantities ---------------------------------------
     for extracted in mentioned:
         medicine = extracted.medicine
-        quantity = result.quantity or 1
         existing = draft.find_item(medicine.id)
         if existing:
             if result.quantity:
                 existing.quantity = result.quantity
+                existing.needs_quantity = False
+            elif result.quantity_issue:
+                existing.needs_quantity = True
         else:
             draft.items.append(
-                DraftItem(medicine_id=medicine.id, brand_name=medicine.brand_name, quantity=quantity)
+                DraftItem(
+                    medicine_id=medicine.id,
+                    brand_name=medicine.brand_name,
+                    quantity=result.quantity or 1,
+                    # "999 packs of Panadol" must not quietly become one pack.
+                    needs_quantity=result.quantity_issue is not None,
+                )
             )
             flow.started = True
 
     # A bare number answers "how many packs?".
-    if result.quantity and not mentioned and draft.items:
-        draft.items[-1].quantity = result.quantity
+    if not mentioned and draft.items:
+        if result.quantity:
+            draft.items[-1].quantity = result.quantity
+            draft.items[-1].needs_quantity = False
+        elif result.quantity_issue and asked == Slot.QUANTITY:
+            draft.items[-1].needs_quantity = True
 
     # --- customer details ------------------------------------------------
     if result.person_name:
@@ -339,7 +365,15 @@ def _create_order(
         medicine = kb.get(draft_item.medicine_id)
         if medicine is None:
             continue
-        items.append(OrderItem.from_medicine(medicine, draft_item.quantity))
+        # Belt and braces: next_slot() already stops the flow reaching
+        # confirmation with an unanswered quantity, but the order store is the
+        # last place a bad count can still be caught before it is written.
+        try:
+            quantity = validate_quantity(draft_item.quantity)
+        except InvalidQuantity as exc:
+            logger.error("Refusing to build an order item: %s", exc)
+            return None
+        items.append(OrderItem.from_medicine(medicine, quantity))
 
     customer = Customer(
         name=draft.name or "Unnamed caller",
@@ -452,6 +486,9 @@ def build_order_context(flow: FlowResult, kb: PharmacyKnowledgeBase | None = Non
         lines.append("- Order in progress:")
         lines.extend(draft.summary(kb))
 
+    if flow.quantity_issue:
+        lines.append(f"- {QUANTITY_ISSUE_NOTE[flow.quantity_issue]}")
+
     next_slot = draft.next_slot()
     draft.asked_for = next_slot if next_slot != Slot.DONE else None
     if next_slot in SLOT_PROMPTS:
@@ -482,6 +519,9 @@ def fallback_order_reply(flow: FlowResult, kb: PharmacyKnowledgeBase | None = No
     if blocked:
         return blocked[0].message + " A pharmacist will follow up with you."
 
+    if flow.quantity_issue:
+        return QUANTITY_ISSUE_REPLY[flow.quantity_issue]
+
     next_slot = draft.next_slot()
     prompts = {
         Slot.MEDICINE: "Which medicine would you like to order?",
@@ -503,6 +543,81 @@ def _confirm_sentence(draft: OrderDraft, kb: PharmacyKnowledgeBase) -> str:
     return (
         f"So that's {items} for {draft.name}, {kb.format_price(total)}. "
         "Shall I place the order?"
+    )
+
+
+# What the caller should be told for each status.
+_STATUS_MEANING = {
+    "confirmed": "confirmed and being prepared",
+    "awaiting_prescription": "waiting for a valid prescription before we can dispense it",
+    "escalated": "with the pharmacist for review",
+    "ready_for_pickup": "ready to collect at the counter",
+    "out_for_delivery": "out for delivery",
+    "completed": "completed",
+    "cancelled": "cancelled",
+}
+
+
+def build_status_context(
+    result: QueryResult,
+    store: OrderStore | None = None,
+    kb: PharmacyKnowledgeBase | None = None,
+) -> str:
+    """
+    Answer "is my order ready?" from the order records.
+
+    Looks the order up by the number the caller reads back, falling back to
+    their phone number.
+    """
+    store = store or get_order_store()
+    kb = kb or get_knowledge_base()
+
+    order = None
+    if result.order_reference:
+        order = store.get(result.order_reference)
+    if order is None and result.phone:
+        matches = store.list_orders(phone=result.phone)
+        order = matches[0] if matches else None
+
+    lines = ["ORDER STATUS LOOKUP"]
+    if order is None:
+        lines.append("- No matching order found.")
+        lines.append(
+            "- Ask the caller for their order number or the phone number the order was "
+            "placed under. Do not invent an order."
+        )
+        return "\n".join(lines)
+
+    lines.append(f"- Order {order.id} for {order.customer.name}")
+    for item in order.items:
+        lines.append(f"  {item.quantity} x {item.brand_name} {item.strength}")
+    lines.append(f"  Total: {kb.format_price(order.total)}")
+    lines.append(f"  Status: {order.status} - {_STATUS_MEANING.get(order.status, order.status)}")
+    lines.append(f"  Fulfilment: {order.customer.fulfilment}")
+    if order.status == "awaiting_prescription":
+        lines.append("- Remind the caller we need a valid prescription before dispensing.")
+    lines.append("- Tell the caller the status in one short sentence.")
+    return "\n".join(lines)
+
+
+def fallback_status_reply(
+    result: QueryResult,
+    store: OrderStore | None = None,
+    kb: PharmacyKnowledgeBase | None = None,
+) -> str:
+    store = store or get_order_store()
+    kb = kb or get_knowledge_base()
+    order = None
+    if result.order_reference:
+        order = store.get(result.order_reference)
+    if order is None and result.phone:
+        matches = store.list_orders(phone=result.phone)
+        order = matches[0] if matches else None
+    if order is None:
+        return "I couldn't find that order. Could you give me the order number or the phone number it was placed under?"
+    return (
+        f"Order {order.id} for {order.customer.name} is "
+        f"{_STATUS_MEANING.get(order.status, order.status)}."
     )
 
 

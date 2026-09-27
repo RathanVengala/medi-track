@@ -13,16 +13,16 @@ source of truth for what the shelf holds.
 
 from __future__ import annotations
 
-import json
 import logging
-import os
 import threading
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
 
+from app.config import settings
 from app.knowledge_base import DATA_DIR, Medicine, PharmacyKnowledgeBase, get_knowledge_base
+from app.storage import atomic_write_json, file_lock, load_json
 
 logger = logging.getLogger("meditrack.orders")
 
@@ -64,6 +64,38 @@ class Fulfilment(str, Enum):
 
 class OrderError(Exception):
     pass
+
+
+class InvalidQuantity(OrderError):
+    """A pack count that must never reach a persisted order."""
+
+
+def validate_quantity(quantity: object, maximum: int | None = None) -> int:
+    """
+    Coerce and bounds-check a pack count, or raise `InvalidQuantity`.
+
+    The stock check alone is not a sufficient guard: it compares the request
+    against what is on the shelf, and zero, a negative, or a fractional count
+    all pass that comparison happily. A zero-pack order used to persist with a
+    total of 0.00, and "minus one pack" persisted a NEGATIVE total, because
+    nothing between the transcript and the JSON file ever asked whether the
+    number made sense as a quantity.
+    """
+    maximum = settings.MAX_ORDER_QUANTITY if maximum is None else maximum
+
+    if isinstance(quantity, bool) or not isinstance(quantity, int):
+        # bool is an int subclass; True must not silently mean "one pack".
+        raise InvalidQuantity(f"Quantity must be a whole number of packs, got {quantity!r}.")
+    if quantity <= 0:
+        raise InvalidQuantity(
+            f"Quantity must be at least 1 pack, got {quantity}."
+        )
+    if quantity > maximum:
+        raise InvalidQuantity(
+            f"{quantity} packs is above the {maximum}-pack limit for a phone order. "
+            "A pharmacist has to place an order that size."
+        )
+    return quantity
 
 
 @dataclass
@@ -218,40 +250,85 @@ class StockCheck:
 
 
 class OrderStore:
-    """JSON-backed order records. Safe for the single-process demo server."""
+    """
+    JSON-backed order records, safe across threads *and* processes.
+
+    Two levels of exclusion, because the app is meant to run under more than
+    one uvicorn worker:
+
+    * `self._lock` serialises threads inside this interpreter.
+    * `file_lock(self.path)` serialises every process on the machine.
+
+    Every write re-reads the file inside both locks before touching it, so a
+    sibling worker's orders are counted in the stock check and are not lost
+    when this worker saves.
+    """
 
     def __init__(self, path: Path | str = ORDERS_FILE) -> None:
         self.path = Path(path)
         self._lock = threading.Lock()
         self._orders: dict[str, Order] = {}
-        self._sequence = 0
+        self._sequence = _SEQUENCE_START
         self.load()
 
     # -- persistence ------------------------------------------------------
 
     def load(self) -> None:
-        if not self.path.exists():
-            self._orders = {}
-            self._sequence = _SEQUENCE_START
-            return
-        with self.path.open("r", encoding="utf-8") as f:
-            raw = json.load(f)
-        self._orders = {row["id"]: Order.from_dict(row) for row in raw.get("orders", [])}
-        self._sequence = int(raw.get("sequence", _SEQUENCE_START + len(self._orders)))
+        """Re-read the store from disk, recovering from a damaged file."""
+        with self._lock:
+            with file_lock(self.path):
+                self._load_unlocked()
+
+    def _load_unlocked(self) -> None:
+        """Read the file. The caller must already hold both locks."""
+        raw = load_json(self.path, default={})
+        orders: dict[str, Order] = {}
+        skipped = 0
+        for row in raw.get("orders", []):
+            try:
+                order = Order.from_dict(row)
+            except (KeyError, TypeError, ValueError) as exc:
+                # One malformed record must not cost the pharmacy every other
+                # order in the file.
+                skipped += 1
+                logger.error("Skipping unreadable order record (%s): %r", exc, row)
+                continue
+            # Refresh the record we already hold rather than replacing it.
+            # Callers keep Order references (the order flow returns one, then
+            # attaches an escalation to it); swapping in a new object would
+            # leave those references pointing at a stale copy.
+            existing = self._orders.get(order.id)
+            if existing is not None:
+                for f in fields(Order):
+                    setattr(existing, f.name, getattr(order, f.name))
+                order = existing
+            orders[order.id] = order
+        if skipped:
+            logger.error("%d order record(s) in %s could not be read.", skipped, self.path.name)
+
+        self._orders = orders
+        sequence = raw.get("sequence", _SEQUENCE_START + len(orders))
+        try:
+            self._sequence = int(sequence)
+        except (TypeError, ValueError):
+            self._sequence = _SEQUENCE_START + len(orders)
+        # Never hand out an id that is already taken, whatever the file claimed.
+        for order_id in orders:
+            _, _, digits = order_id.partition("-")
+            if digits.isdigit():
+                self._sequence = max(self._sequence, int(digits))
         logger.info("Loaded %d orders from %s", len(self._orders), self.path)
 
-    def _save(self) -> None:
-        payload = {
-            "sequence": self._sequence,
-            "updated_at": _now(),
-            "orders": [o.to_dict() for o in self._orders.values()],
-        }
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_suffix(".json.tmp")
-        with tmp.open("w", encoding="utf-8") as f:
-            json.dump(payload, f, indent=2, ensure_ascii=False)
-            f.write("\n")
-        os.replace(tmp, self.path)
+    def _save_unlocked(self) -> None:
+        """Write the store. The caller must already hold both locks."""
+        atomic_write_json(
+            self.path,
+            {
+                "sequence": self._sequence,
+                "updated_at": _now(),
+                "orders": [o.to_dict() for o in self._orders.values()],
+            },
+        )
 
     # -- reads ------------------------------------------------------------
 
@@ -350,46 +427,68 @@ class OrderStore:
         kb: PharmacyKnowledgeBase | None = None,
     ) -> Order:
         """
-        Record a confirmed order. Re-checks stock first, so two callers cannot
-        both reserve the last pack.
+        Record a confirmed order.
+
+        Quantities are validated before anything else, then stock is re-checked
+        against the file as it stands *right now* - inside the cross-process
+        lock - so two workers cannot both reserve the last pack.
         """
         if not items:
             raise OrderError("An order needs at least one item.")
         kb = kb or get_knowledge_base()
 
+        # Bounds first: a zero, negative or absurd pack count is refused before
+        # it can reach pricing, stock or the file.
+        for item in items:
+            validate_quantity(item.quantity)
+
         with self._lock:
-            for item in items:
-                medicine = kb.get(item.medicine_id)
-                if medicine is None:
-                    raise OrderError(f"Unknown medicine: {item.medicine_id}")
-                check = self.check_stock(medicine, item.quantity, kb=kb)
-                if not check.can_fulfil:
-                    raise OrderError(check.message)
+            with file_lock(self.path):
+                # Another worker may have reserved stock since we last read.
+                self._load_unlocked()
+                return self._create_order_unlocked(customer, items, call_id, status, notes, kb)
 
-            subtotal = round(sum(i.line_total for i in items), 2)
-            delivery_fee = self._delivery_fee(customer, subtotal, kb)
-            requires_prescription = any(i.prescription_required for i in items)
+    def _create_order_unlocked(
+        self,
+        customer: Customer,
+        items: list[OrderItem],
+        call_id: str,
+        status: OrderStatus,
+        notes: list[str] | None,
+        kb: PharmacyKnowledgeBase,
+    ) -> Order:
+        for item in items:
+            medicine = kb.get(item.medicine_id)
+            if medicine is None:
+                raise OrderError(f"Unknown medicine: {item.medicine_id}")
+            check = self.check_stock(medicine, item.quantity, kb=kb)
+            if not check.can_fulfil:
+                raise OrderError(check.message)
 
-            if requires_prescription and status == OrderStatus.CONFIRMED:
-                status = OrderStatus.AWAITING_PRESCRIPTION
+        subtotal = round(sum(i.line_total for i in items), 2)
+        delivery_fee = self._delivery_fee(customer, subtotal, kb)
+        requires_prescription = any(i.prescription_required for i in items)
 
-            now = _now()
-            order = Order(
-                id=self._next_id(),
-                created_at=now,
-                updated_at=now,
-                call_id=call_id,
-                customer=customer,
-                items=items,
-                subtotal=subtotal,
-                delivery_fee=delivery_fee,
-                total=round(subtotal + delivery_fee, 2),
-                status=status.value,
-                requires_prescription=requires_prescription,
-                notes=list(notes or []),
-            )
-            self._orders[order.id] = order
-            self._save()
+        if requires_prescription and status == OrderStatus.CONFIRMED:
+            status = OrderStatus.AWAITING_PRESCRIPTION
+
+        now = _now()
+        order = Order(
+            id=self._next_id(),
+            created_at=now,
+            updated_at=now,
+            call_id=call_id,
+            customer=customer,
+            items=items,
+            subtotal=subtotal,
+            delivery_fee=delivery_fee,
+            total=round(subtotal + delivery_fee, 2),
+            status=status.value,
+            requires_prescription=requires_prescription,
+            notes=list(notes or []),
+        )
+        self._orders[order.id] = order
+        self._save_unlocked()
 
         logger.info("Created order %s (%s)", order.id, order.status)
         return order
@@ -407,26 +506,30 @@ class OrderStore:
 
     def update_status(self, order_id: str, status: OrderStatus, note: str = "") -> Order:
         with self._lock:
-            order = self.get(order_id)
-            if order is None:
-                raise OrderError(f"Order not found: {order_id}")
-            order.status = status.value
-            order.updated_at = _now()
-            if note:
-                order.notes.append(note)
-            self._save()
+            with file_lock(self.path):
+                self._load_unlocked()  # do not clobber a sibling worker's writes
+                order = self.get(order_id)
+                if order is None:
+                    raise OrderError(f"Order not found: {order_id}")
+                order.status = status.value
+                order.updated_at = _now()
+                if note:
+                    order.notes.append(note)
+                self._save_unlocked()
         logger.info("Order %s -> %s", order.id, order.status)
         return order
 
     def attach_escalation(self, order_id: str, escalation_id: str) -> None:
         with self._lock:
-            order = self.get(order_id)
-            if order is None:
-                return
-            if escalation_id not in order.escalation_ids:
-                order.escalation_ids.append(escalation_id)
-                order.updated_at = _now()
-                self._save()
+            with file_lock(self.path):
+                self._load_unlocked()
+                order = self.get(order_id)
+                if order is None:
+                    return
+                if escalation_id not in order.escalation_ids:
+                    order.escalation_ids.append(escalation_id)
+                    order.updated_at = _now()
+                    self._save_unlocked()
 
     def cancel(self, order_id: str, reason: str = "") -> Order:
         return self.update_status(order_id, OrderStatus.CANCELLED, reason)
